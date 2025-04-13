@@ -9,19 +9,21 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// Константы для настроек базы данных по умолчанию
+const (
+	DefaultDBType = "sqlite"
+	DefaultDBPath = "./data/engbot.db"
+)
+
 // DB is the global database connection
 var DB *sqlx.DB
 
 // Connect establishes a connection to the database
 func Connect() error {
+	// Используем стандартные значения с возможностью переопределения через переменные окружения
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		// Default path if not specified
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get user home directory: %v", err)
-		}
-		dbPath = filepath.Join(homeDir, ".engbot", "database.db")
+		dbPath = DefaultDBPath
 	}
 
 	// Create directory if it doesn't exist

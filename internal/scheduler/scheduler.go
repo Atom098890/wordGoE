@@ -2,10 +2,18 @@ package scheduler
 
 import (
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/example/engbot/internal/database"
 	"github.com/go-co-op/gocron"
+)
+
+// Константы для настроек уведомлений по умолчанию
+const (
+	DefaultNotificationStartHour = 8  // Время начала уведомлений (8:00)
+	DefaultNotificationEndHour   = 22 // Время окончания уведомлений (22:00)
 )
 
 // Scheduler manages scheduled tasks for the application
@@ -45,6 +53,30 @@ func (s *Scheduler) Stop() {
 // checkAndSendReminders checks for users who need reminders and sends them
 func (s *Scheduler) checkAndSendReminders() {
 	currentHour := time.Now().Hour()
+	
+	// Используем значения по умолчанию
+	startHour := DefaultNotificationStartHour
+	endHour := DefaultNotificationEndHour
+	
+	// Проверяем, задано ли время в переменных окружения
+	if startHourStr := os.Getenv("NOTIFICATION_START_HOUR"); startHourStr != "" {
+		if h, err := strconv.Atoi(startHourStr); err == nil && h >= 0 && h <= 23 {
+			startHour = h
+		}
+	}
+	
+	if endHourStr := os.Getenv("NOTIFICATION_END_HOUR"); endHourStr != "" {
+		if h, err := strconv.Atoi(endHourStr); err == nil && h >= 0 && h <= 23 {
+			endHour = h
+		}
+	}
+	
+	// Проверяем, находится ли текущий час в диапазоне времени для отправки уведомлений
+	if currentHour < startHour || currentHour > endHour {
+		log.Printf("Current hour %d is outside notification hours (%d-%d), skipping reminders", 
+			currentHour, startHour, endHour)
+		return
+	}
 	
 	// Get user repository
 	userRepo := database.NewUserRepository()
