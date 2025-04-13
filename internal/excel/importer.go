@@ -364,13 +364,8 @@ func processWordData(word, translation, description, topicName, difficulty, pron
 	}
 	
 	if !foundExact {
-		// Check if exists with different topic
-		for _, existingWord := range existingWords {
-			if strings.EqualFold(existingWord.Word, word) && existingWord.TopicID != topicID {
-				result.Errors = append(result.Errors, fmt.Sprintf("Row %d: Word exists with different topic", rowNum))
-				return nil
-			}
-		}
+		// Раньше тут был запрет на создание слов с одинаковым названием в разных темах
+		// Теперь разрешаем создавать слова с одинаковым названием в разных темах
 		
 		// Create new word
 		newWord := &models.Word{
