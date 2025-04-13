@@ -20,7 +20,7 @@ func (r *WordRepository) GetAll() ([]models.Word, error) {
 	query := `
 		SELECT 
 			id, 
-			english_word, 
+			word, 
 			translation, 
 			context, 
 			topic_id, 
@@ -29,7 +29,7 @@ func (r *WordRepository) GetAll() ([]models.Word, error) {
 			created_at, 
 			updated_at 
 		FROM words 
-		ORDER BY english_word
+		ORDER BY word
 	`
 	
 	err := DB.Select(&words, query)
@@ -45,7 +45,7 @@ func (r *WordRepository) GetByID(id int) (*models.Word, error) {
 	query := `
 		SELECT 
 			id, 
-			english_word, 
+			word, 
 			translation, 
 			context, 
 			topic_id, 
@@ -70,7 +70,7 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 	query := `
 		SELECT 
 			id, 
-			english_word, 
+			word, 
 			translation, 
 			context, 
 			topic_id, 
@@ -80,7 +80,7 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 			updated_at 
 		FROM words 
 		WHERE topic_id = ? 
-		ORDER BY english_word
+		ORDER BY word
 	`
 	
 	err := DB.Select(&words, query, topicID)
@@ -93,7 +93,7 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 // Create inserts a new word
 func (r *WordRepository) Create(word *models.Word) error {
 	query := `
-		INSERT INTO words (english_word, translation, context, topic_id, difficulty, pronunciation, created_at, updated_at)
+		INSERT INTO words (word, translation, context, topic_id, difficulty, pronunciation, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 	result, err := DB.Exec(
@@ -130,7 +130,7 @@ func (r *WordRepository) Create(word *models.Word) error {
 func (r *WordRepository) Update(word *models.Word) error {
 	query := `
 		UPDATE words SET 
-			english_word = ?,
+			word = ?,
 			translation = ?,
 			context = ?,
 			topic_id = ?,
@@ -181,7 +181,7 @@ func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 	sqlQuery := `
 		SELECT 
 			id, 
-			english_word, 
+			word, 
 			translation, 
 			context, 
 			topic_id, 
@@ -190,8 +190,8 @@ func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 			created_at, 
 			updated_at 
 		FROM words 
-		WHERE LOWER(english_word) LIKE LOWER(?) OR LOWER(translation) LIKE LOWER(?)
-		ORDER BY english_word
+		WHERE LOWER(word) LIKE LOWER(?) OR LOWER(translation) LIKE LOWER(?)
+		ORDER BY word
 	`
 	pattern := "%" + query + "%"
 	
@@ -209,7 +209,7 @@ func (r *WordRepository) GetRandomWordsByTopic(topicID int64, count int) ([]mode
 	query := `
 		SELECT 
 			id, 
-			english_word, 
+			word, 
 			translation, 
 			context, 
 			topic_id, 
@@ -236,7 +236,7 @@ func GetWordByID(wordID int) (*models.Word, error) {
 	query := `
 		SELECT 
 			w.id, 
-			w.english_word, 
+			w.word, 
 			w.translation, 
 			w.context, 
 			w.difficulty, 

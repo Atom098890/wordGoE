@@ -5,7 +5,7 @@ import "time"
 // Word represents an English word to be learned
 type Word struct {
 	ID           int       `json:"id" db:"id"`
-	Word         string    `json:"word" db:"english_word"`
+	Word         string    `json:"word" db:"word"`
 	Translation  string    `json:"translation" db:"translation"`
 	Context      string    `json:"context,omitempty" db:"context"`
 	TopicID      int64     `json:"topic_id" db:"topic_id"`
