@@ -9,8 +9,8 @@ RUN go mod download
 # Копируем весь исходный код
 COPY . .
 
-# Собираем приложение
-RUN go build -o engbot
+# Собираем приложение из директории cmd/engbot
+RUN go build -o engbot ./cmd/engbot
 
 # Создаем директорию для данных
 RUN mkdir -p /app/data

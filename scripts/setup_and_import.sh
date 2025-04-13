@@ -96,8 +96,8 @@ function import_words() {
     
     print_message "Importing words from $file..."
     
-    # Run the import command
-    go run main.go -import -file="$file"
+    # Run the import command using the binary in cmd/engbot
+    go run cmd/engbot/main.go -import -file="$file"
     
     if [ $? -eq 0 ]; then
         print_success "Words successfully imported from $file."
