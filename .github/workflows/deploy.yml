@@ -1,0 +1,114 @@
+name: Deploy Telegram Bot
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up SSH connection
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.BOT_KEY }}
+          log-public-key: false
+
+      - name: Verify Dockerfile
+        run: cat Dockerfile | grep "FROM golang:latest"
+
+      - name: Deploy to VPS
+        run: |
+          # Prepare directory
+          echo "Creating directory..."
+          ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o UserKnownHostsFile=/dev/null atom@${{ secrets.SERVER_IP }} "mkdir -p /home/atom/engBot" > /dev/null 2>&1
+          
+          # Upload code
+          echo "Uploading code..."
+          rsync -av -e "ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o UserKnownHostsFile=/dev/null" ./ atom@${{ secrets.SERVER_IP }}:/home/atom/engBot/ --exclude .git
+          
+          # Create env file
+          echo "Creating env file..."
+          ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o UserKnownHostsFile=/dev/null atom@${{ secrets.SERVER_IP }} "cat > /home/atom/engBot/.env << 'EOL'
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          
+          # Database Configuration
+          DB_TYPE=sqlite
+          DB_PATH=/app/data/engbot.db
+          
+          # Admin Configuration
+          ADMIN_USER_IDS=${{ secrets.ADMIN_USER_IDS }}
+          
+          # Notification Settings
+          NOTIFICATION_START_HOUR=8
+          NOTIFICATION_END_HOUR=22
+          
+          # ChatGPT Configuration (optional)
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          EOL" > /dev/null 2>&1
+          
+          # Deploy
+          echo "Starting deployment..."
+          ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o UserKnownHostsFile=/dev/null atom@${{ secrets.SERVER_IP }} "
+            cd /home/atom/engBot &&
+            echo 'Verifying Dockerfile on server...' &&
+            cat Dockerfile | grep 'FROM golang:latest' &&
+            
+            # Create timestamp for unique naming
+            TIMESTAMP=\$(date +%s) &&
+            CONTAINER_NAME=\"engbot_\$TIMESTAMP\" &&
+            IMAGE=\"engbot:\$TIMESTAMP\" &&
+            
+            echo 'Building Docker image...' &&
+            docker build --pull --no-cache -t \$IMAGE . &&
+            
+            echo 'Ensuring data volume exists...' &&
+            docker volume inspect engbot_data >/dev/null 2>&1 || docker volume create engbot_data &&
+            
+            echo 'Starting new container with name: '\$CONTAINER_NAME &&
+            docker run -d --name \$CONTAINER_NAME --restart unless-stopped \
+              -v engbot_data:/app/data \
+              -e TELEGRAM_BOT_TOKEN=\"${{ secrets.TELEGRAM_BOT_TOKEN }}\" \
+              -e DB_TYPE=\"sqlite\" \
+              -e DB_PATH=\"/app/data/engbot.db\" \
+              -e ADMIN_USER_IDS=\"${{ secrets.ADMIN_USER_IDS }}\" \
+              -e NOTIFICATION_START_HOUR=\"8\" \
+              -e NOTIFICATION_END_HOUR=\"22\" \
+              -e OPENAI_API_KEY=\"${{ secrets.OPENAI_API_KEY }}\" \
+              \$IMAGE &&
+            
+            echo 'Waiting for container to start...' &&
+            sleep 5 &&
+            
+            echo 'New container status:' &&
+            docker ps | grep \$CONTAINER_NAME &&
+            
+            echo 'New container logs:' &&
+            docker logs \$CONTAINER_NAME &&
+            
+            # Find and stop old containers
+            echo 'Finding and stopping old containers...' &&
+            for old in \$(docker ps -a --filter \"name=engbot_\" --format '{{.Names}}' | grep -v \$CONTAINER_NAME); do
+              echo \"Stopping container: \$old\" &&
+              docker stop \$old &&
+              docker rm \$old
+            done &&
+            
+            echo 'Current running containers:' &&
+            docker ps | grep engbot &&
+            
+            echo 'Cleaning up old images...' &&
+            docker images 'engbot:*' --format '{{.ID}}' | tail -n +5 | xargs -r docker rmi || true &&
+            
+            echo 'Cleaning up stopped containers...' &&
+            docker container prune -f &&
+            
+            echo 'Deployment successful!'
+          "
+          echo "Deployment completed successfully" 
