@@ -22,7 +22,7 @@ func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 	var user models.User
 	var preferredTopicsJSON string
 	
-	query := "SELECT id, username, first_name, last_name, is_admin, preferred_topics, notification_enabled, notification_hour, words_per_day, created_at, updated_at FROM users WHERE id = ?"
+	query := "SELECT telegram_id, username, first_name, last_name, is_admin, preferred_topics, notification_enabled, notification_hour, words_per_day, created_at, updated_at FROM users WHERE telegram_id = ?"
 	
 	// Convert ? placeholders to $ for PostgreSQL if needed
 	if DB.DriverName() == "postgres" {
@@ -60,7 +60,7 @@ func (r *UserRepository) GetByID(id int64) (*models.User, error) {
 
 // GetAll returns all users
 func (r *UserRepository) GetAll() ([]models.User, error) {
-	rows, err := DB.Query("SELECT id, username, first_name, last_name, is_admin, preferred_topics, notification_enabled, notification_hour, words_per_day, created_at, updated_at FROM users ORDER BY created_at DESC")
+	rows, err := DB.Query("SELECT telegram_id, username, first_name, last_name, is_admin, preferred_topics, notification_enabled, notification_hour, words_per_day, created_at, updated_at FROM users ORDER BY created_at DESC")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get users: %v", err)
 	}
@@ -115,10 +115,10 @@ func (r *UserRepository) Create(user *models.User) error {
 	if DB.DriverName() == "postgres" {
 		query = `
 			INSERT INTO users (
-				id, username, first_name, last_name, is_admin, 
+				telegram_id, username, first_name, last_name, is_admin, 
 				preferred_topics, notification_enabled, notification_hour, words_per_day
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			ON CONFLICT (id) DO UPDATE SET
+			ON CONFLICT (telegram_id) DO UPDATE SET
 				username = EXCLUDED.username,
 				first_name = EXCLUDED.first_name,
 				last_name = EXCLUDED.last_name,
@@ -129,7 +129,7 @@ func (r *UserRepository) Create(user *models.User) error {
 		// SQLite doesn't support RETURNING, so we need two separate queries
 		query = `
 			INSERT OR REPLACE INTO users (
-				id, username, first_name, last_name, is_admin, 
+				telegram_id, username, first_name, last_name, is_admin, 
 				preferred_topics, notification_enabled, notification_hour, words_per_day,
 				created_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -170,7 +170,7 @@ func (r *UserRepository) Create(user *models.User) error {
 		
 		// Get the timestamps in a separate query
 		var createdAt, updatedAt string
-		err = DB.QueryRow("SELECT created_at, updated_at FROM users WHERE id = ?", user.ID).Scan(&createdAt, &updatedAt)
+		err = DB.QueryRow("SELECT created_at, updated_at FROM users WHERE telegram_id = ?", user.ID).Scan(&createdAt, &updatedAt)
 		if err != nil {
 			return fmt.Errorf("failed to get timestamps: %v", err)
 		}
@@ -200,7 +200,7 @@ func (r *UserRepository) Update(user *models.User) error {
 				notification_hour = $7,
 				words_per_day = $8,
 				updated_at = NOW()
-			WHERE id = $9
+			WHERE telegram_id = $9
 			RETURNING updated_at
 		`
 	} else {
@@ -215,7 +215,7 @@ func (r *UserRepository) Update(user *models.User) error {
 				notification_hour = ?,
 				words_per_day = ?,
 				updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
+			WHERE telegram_id = ?
 		`
 	}
 	
@@ -257,7 +257,7 @@ func (r *UserRepository) Update(user *models.User) error {
 
 // Delete removes a user
 func (r *UserRepository) Delete(id int64) error {
-	query := "DELETE FROM users WHERE id = ?"
+	query := "DELETE FROM users WHERE telegram_id = ?"
 	
 	// Replace ? with $ for PostgreSQL if needed
 	if DB.DriverName() == "postgres" {
@@ -276,7 +276,7 @@ func (r *UserRepository) UpdatePreferredTopics(userID int64, topicIDs []int64) e
 		return fmt.Errorf("failed to marshal preferred topics: %v", err)
 	}
 	
-	query := "UPDATE users SET preferred_topics = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+	query := "UPDATE users SET preferred_topics = ?, updated_at = CURRENT_TIMESTAMP WHERE telegram_id = ?"
 	
 	// Replace ? with $ for PostgreSQL if needed
 	if DB.DriverName() == "postgres" {
@@ -327,7 +327,7 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 	}
 	
 	// Проверяем наличие обязательных колонок
-	requiredColumns := []string{"id", "username", "first_name", "last_name", "is_admin"}
+	requiredColumns := []string{"telegram_id", "username", "first_name", "last_name", "is_admin"}
 	for _, col := range requiredColumns {
 		if !columns[col] {
 			return nil, fmt.Errorf("required column '%s' not found in users table", col)
@@ -335,7 +335,7 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 	}
 	
 	// Строим запрос на основе существующих колонок
-	selectColumns := "id, username, first_name, last_name, is_admin"
+	selectColumns := "telegram_id, username, first_name, last_name, is_admin"
 	
 	// Добавляем опциональные колонки, если они существуют
 	optionalColumns := map[string]string{

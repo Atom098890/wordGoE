@@ -4,7 +4,7 @@ import "time"
 
 // User represents a Telegram user using the bot
 type User struct {
-	ID                  int64     `json:"id" db:"id"` // Telegram User ID
+	ID                  int64     `json:"id" db:"telegram_id"` // Telegram User ID
 	Username            string    `json:"username" db:"username"`
 	FirstName           string    `json:"first_name" db:"first_name"`
 	LastName            string    `json:"last_name" db:"last_name"`

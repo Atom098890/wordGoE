@@ -113,7 +113,7 @@ func importFromExcel(config ImportConfig) (*ImportResult, error) {
 
 		result.TotalProcessed++
 
-		if err := processRow(row, config, topicMap, topicRepo, wordRepo, result, i+1); err != nil {
+		if err := processRow(row, config, topicMap, topicRepo, wordRepo, result); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Row %d: %v", i+1, err))
 		}
 	}
@@ -191,7 +191,7 @@ func importFromCSV(config ImportConfig) (*ImportResult, error) {
 		result.TotalProcessed++
 
 		// Process the row with current topic
-		if err := processCSVRow(row, topicMap, topicRepo, wordRepo, result, rowNum, currentTopic); err != nil {
+		if err := processCSVRow(row, topicMap, topicRepo, wordRepo, result, currentTopic); err != nil {
 			// Only add error if it's not "skipping row" error
 			if err.Error() != "skipping row" {
 				result.Errors = append(result.Errors, fmt.Sprintf("Row %d: %v", rowNum, err))
@@ -205,7 +205,7 @@ func importFromCSV(config ImportConfig) (*ImportResult, error) {
 // processRow processes a single row from Excel
 func processRow(row []string, config ImportConfig, topicMap map[string]int64, 
                 topicRepo *database.TopicRepository, wordRepo *database.WordRepository, 
-                result *ImportResult, rowNum int) error {
+                result *ImportResult) error {
 	// Get cell values
 	var word, translation, description, topicName, difficulty, pronunciation string
 	
@@ -232,13 +232,13 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 	}
 
 	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
-	                     topicMap, topicRepo, wordRepo, result, rowNum)
+	                     topicMap, topicRepo, wordRepo, result)
 }
 
 // processCSVRow processes a single row from CSV
 func processCSVRow(row []string, topicMap map[string]int64, 
                    topicRepo *database.TopicRepository, wordRepo *database.WordRepository, 
-                   result *ImportResult, rowNum int, currentTopic string) error {
+                   result *ImportResult, currentTopic string) error {
 	// Пропускаем заголовки и строки с названиями категорий
 	if len(row) < 3 || strings.HasPrefix(row[0], "\"") || row[0] == "" {
 		return fmt.Errorf("skipping row")
@@ -274,7 +274,7 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	difficulty = "3"
 	
 	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
-	                     topicMap, topicRepo, wordRepo, result, rowNum)
+	                     topicMap, topicRepo, wordRepo, result)
 }
 
 // cleanWord удаляет из слова дополнительную информацию в скобках
@@ -312,7 +312,7 @@ func getOrCreateTopic(topicName string, topicMap map[string]int64, topicRepo *da
 // processWordData handles the common logic for processing word data from any source
 func processWordData(word, translation, description, topicName, difficulty, pronunciation string, 
                      topicMap map[string]int64, topicRepo *database.TopicRepository, 
-                     wordRepo *database.WordRepository, result *ImportResult, rowNum int) error {
+                     wordRepo *database.WordRepository, result *ImportResult) error {
 	// Clean up word data
 	word = cleanWord(word)
 	translation = cleanWord(translation)
