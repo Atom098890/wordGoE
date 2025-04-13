@@ -96,8 +96,8 @@ function import_words() {
     
     print_message "Importing words from $file..."
     
-    # Run the import command using the binary in cmd/engbot
-    go run cmd/engbot/main.go -import -file="$file"
+    # Run the import command
+    go run main.go -import -file="$file"
     
     if [ $? -eq 0 ]; then
         print_success "Words successfully imported from $file."
@@ -110,16 +110,7 @@ function import_words() {
 # Function to run the bot
 function run_bot() {
     print_message "Запускаю бота..."
-    
-    # Проверяем наличие main.go в разных местах
-    if [ -f "cmd/engbot/main.go" ]; then
-        go run cmd/engbot/main.go
-    elif [ -f "main.go" ]; then
-        go run main.go
-    else
-        print_error "Файл main.go не найден ни в корне проекта, ни в cmd/engbot!"
-        exit 1
-    fi
+    go run main.go
 }
 
 # Show help information
