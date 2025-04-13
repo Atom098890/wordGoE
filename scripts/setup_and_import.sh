@@ -89,7 +89,7 @@ function import_words() {
     local sheet="Sheet1"
     local word_col="A"
     local trans_col="B"
-    local context_col="C"
+    local desc_col="C"
     local topic_col="D"
     local diff_col="E"
     local pron_col="F"
@@ -109,8 +109,8 @@ function import_words() {
                 trans_col="$2"
                 shift 2
                 ;;
-            --context-col)
-                context_col="$2"
+            --desc-col)
+                desc_col="$2"
                 shift 2
                 ;;
             --topic-col)
@@ -148,7 +148,7 @@ function import_words() {
     print_message "  - Sheet: $sheet"
     print_message "  - Word column: $word_col"
     print_message "  - Translation column: $trans_col"
-    print_message "  - Context column: $context_col"
+    print_message "  - Description column: $desc_col"
     print_message "  - Topic column: $topic_col"
     print_message "  - Difficulty column: $diff_col"
     print_message "  - Pronunciation column: $pron_col"
@@ -160,7 +160,7 @@ function import_words() {
     import_cmd+=" -sheet=\"$sheet\""
     import_cmd+=" -word-col=\"$word_col\""
     import_cmd+=" -trans-col=\"$trans_col\""
-    import_cmd+=" -context-col=\"$context_col\""
+    import_cmd+=" -desc-col=\"$desc_col\""
     import_cmd+=" -topic-col=\"$topic_col\""
     import_cmd+=" -diff-col=\"$diff_col\""
     import_cmd+=" -pron-col=\"$pron_col\""
@@ -195,10 +195,10 @@ function show_help() {
     print_message "  help        - Показать эту справку"
     print_message ""
     print_message "Опции для импорта:"
-    print_message "  --sheet <name>     - Имя листа Excel (по умолчанию Sheet1)"
+    print_message "  --sheet <n>     - Имя листа Excel (по умолчанию Sheet1)"
     print_message "  --word-col <col>   - Колонка с английскими словами (по умолчанию A)"
     print_message "  --trans-col <col>  - Колонка с переводами (по умолчанию B)"
-    print_message "  --context-col <col>- Колонка с контекстом (по умолчанию C)"
+    print_message "  --desc-col <col>   - Колонка с описанием (по умолчанию C)"
     print_message "  --topic-col <col>  - Колонка с темами (по умолчанию D)"
     print_message "  --diff-col <col>   - Колонка со сложностью (по умолчанию E)"
     print_message "  --pron-col <col>   - Колонка с произношением (по умолчанию F)"

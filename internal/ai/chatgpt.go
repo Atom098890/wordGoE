@@ -127,8 +127,8 @@ func (c *ChatGPT) GenerateExampleWithFallback(word *models.Word) string {
 		fmt.Printf("Error generating example for '%s': %v\n", word.Word, err)
 		
 		// If there's a stored context, use it
-		if word.Context != "" {
-			return word.Context
+		if word.Description != "" {
+			return word.Description
 		}
 		
 		// If no stored context, create a basic example

@@ -186,7 +186,8 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		b.api.Send(tgbotapi.NewEditMessageText(update.Message.Chat.ID, statusMsg.MessageID, "✅ Файл загружен, импортирую слова..."))
 		
 		// Импортируем слова
-		config := excel.DefaultImportConfig(tempFilePath)
+		config := excel.DefaultImportConfig()
+		config.FilePath = tempFilePath
 		result, err := excel.ImportWords(config)
 		
 		if err != nil {
@@ -552,16 +553,20 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 	
 	if b.chatGPT != nil {
 		// Try to generate a new example with ChatGPT
-		context = b.chatGPT.GenerateExampleWithFallback(&word)
+		// Since context field is not stored in DB, always generate a new one
+		example, err := b.chatGPT.GenerateExample(&word)
+		if err == nil {
+			context = example
+		} else {
+			context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.Word)
+		}
 		
 		// Try to generate verb conjugation if it's a verb
 		verbConjugation, err := b.chatGPT.GenerateVerbConjugation(word.Word)
 		if err == nil && verbConjugation != "" {
 			conjugation = verbConjugation
 		}
-	}
-	
-	if context == "" {
+	} else {
 		context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.Word)
 	}
 	
@@ -718,7 +723,7 @@ func (b *Bot) handleImportCommand(message *tgbotapi.Message) {
 		"For standard format:\n"+
 		"- Column A: English word\n"+
 		"- Column B: Translation\n"+
-		"- Column C: Context (example sentence)\n"+
+		"- Column C: Description (example sentence)\n"+
 		"- Column D: Topic (required)\n"+
 		"- Column E: Difficulty (1-5)\n\n"+
 		"Upload the file and I'll process it.")

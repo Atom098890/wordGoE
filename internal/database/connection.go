@@ -99,13 +99,14 @@ func initializeSQLiteSchema() error {
 	// Create words table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS words (
-			id INTEGER PRIMARY KEY,
-			topic_id INTEGER,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			word TEXT NOT NULL,
 			translation TEXT NOT NULL,
-			context TEXT,
-			pronunciation TEXT,
+			description TEXT,
+			topic_id INTEGER NOT NULL,
 			difficulty INTEGER DEFAULT 3,
+			pronunciation TEXT,
+			examples TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL,

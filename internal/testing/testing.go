@@ -115,7 +115,7 @@ func (t *TestingModule) CreateTest(userID int64, topicIDs []int64, questionCount
 			
 		case ContextTest:
 			// Generate context if it doesn't exist
-			context := word.Context
+			context := word.Description
 			if context == "" {
 				context = "This is a sentence with the word " + word.Word + "."
 			}

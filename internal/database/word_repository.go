@@ -22,7 +22,6 @@ func (r *WordRepository) GetAll() ([]models.Word, error) {
 			id, 
 			word, 
 			translation, 
-			context, 
 			topic_id, 
 			difficulty, 
 			pronunciation, 
@@ -47,7 +46,6 @@ func (r *WordRepository) GetByID(id int) (*models.Word, error) {
 			id, 
 			word, 
 			translation, 
-			context, 
 			topic_id, 
 			difficulty, 
 			pronunciation, 
@@ -72,7 +70,6 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 			id, 
 			word, 
 			translation, 
-			context, 
 			topic_id, 
 			difficulty, 
 			pronunciation, 
@@ -93,14 +90,13 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 // Create inserts a new word
 func (r *WordRepository) Create(word *models.Word) error {
 	query := `
-		INSERT INTO words (word, translation, context, topic_id, difficulty, pronunciation, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO words (word, translation, topic_id, difficulty, pronunciation, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 	result, err := DB.Exec(
 		query,
 		word.Word,
 		word.Translation,
-		word.Context,
 		word.TopicID,
 		word.Difficulty,
 		word.Pronunciation,
@@ -132,7 +128,6 @@ func (r *WordRepository) Update(word *models.Word) error {
 		UPDATE words SET 
 			word = ?,
 			translation = ?,
-			context = ?,
 			topic_id = ?,
 			difficulty = ?,
 			pronunciation = ?,
@@ -143,7 +138,6 @@ func (r *WordRepository) Update(word *models.Word) error {
 		query,
 		word.Word,
 		word.Translation,
-		word.Context,
 		word.TopicID,
 		word.Difficulty,
 		word.Pronunciation,
@@ -183,7 +177,6 @@ func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 			id, 
 			word, 
 			translation, 
-			context, 
 			topic_id, 
 			difficulty, 
 			pronunciation, 
@@ -211,7 +204,6 @@ func (r *WordRepository) GetRandomWordsByTopic(topicID int64, count int) ([]mode
 			id, 
 			word, 
 			translation, 
-			context, 
 			topic_id, 
 			difficulty, 
 			pronunciation, 
@@ -238,7 +230,6 @@ func GetWordByID(wordID int) (*models.Word, error) {
 			w.id, 
 			w.word, 
 			w.translation, 
-			w.context, 
 			w.difficulty, 
 			w.topic_id, 
 			w.pronunciation,

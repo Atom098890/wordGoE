@@ -23,7 +23,7 @@ func main() {
 	sheetName := flag.String("sheet", "Sheet1", "Sheet name in Excel file")
 	wordCol := flag.String("word-col", "A", "Column with English words")
 	transCol := flag.String("trans-col", "B", "Column with translations")
-	contextCol := flag.String("context-col", "C", "Column with context/description")
+	descriptionCol := flag.String("desc-col", "C", "Column with description")
 	topicCol := flag.String("topic-col", "D", "Column with topics")
 	diffCol := flag.String("diff-col", "E", "Column with difficulty ratings")
 	pronCol := flag.String("pron-col", "F", "Column with pronunciations")
@@ -54,11 +54,11 @@ func main() {
 			SheetName:           *sheetName,
 			WordColumn:          *wordCol,
 			TranslationColumn:   *transCol,
-			ContextColumn:       *contextCol,
+			DescriptionColumn:   *descriptionCol,
 			TopicColumn:         *topicCol,
 			DifficultyColumn:    *diffCol,
 			PronunciationColumn: *pronCol,
-			HeaderRow:           1,
+			SkipHeader:          true,
 			StartRow:            2,
 		}
 		

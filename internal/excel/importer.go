@@ -13,38 +13,34 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ImportConfig represents configuration for import process
+// ImportConfig defines the import configuration
 type ImportConfig struct {
-	FilePath           string
-	SheetName          string
-	WordColumn         string
-	TranslationColumn  string
-	ContextColumn      string
-	ExamplesColumn     string
-	TopicColumn        string
-	DifficultyColumn   string
-	HeaderRow          int
-	StartRow           int
-	// Optional
-	PronunciationColumn string
-	TopicRow            int
+	FilePath           string // Path to the Excel or CSV file
+	WordColumn         string // Column with the word
+	TranslationColumn  string // Column with the translation
+	DescriptionColumn  string // Column with the description
+	TopicColumn        string // Column with the topic
+	DifficultyColumn   string // Column with the difficulty
+	PronunciationColumn string // Column with the pronunciation
+	ExamplesColumn     string // Column with the examples
+	SheetName          string // Name of the sheet to import
+	SkipHeader         bool   // Skip the header row
+	StartRow           int    // The row to start importing from (1-based index)
 }
 
-// DefaultImportConfig provides reasonable default values for import configuration
-func DefaultImportConfig(filePath string) ImportConfig {
+// DefaultImportConfig returns the default import configuration
+func DefaultImportConfig() ImportConfig {
 	return ImportConfig{
-		FilePath:            filePath,
-		SheetName:           "Sheet1",
-		WordColumn:          "A",
-		TranslationColumn:   "B",
-		ContextColumn:       "C",
-		ExamplesColumn:      "D",
-		TopicColumn:         "E",
-		DifficultyColumn:    "F",
-		PronunciationColumn: "G",
-		HeaderRow:           1,
-		StartRow:            2,
-		TopicRow:            0,
+		WordColumn:         "A",
+		TranslationColumn:  "B",
+		DescriptionColumn:  "C",
+		TopicColumn:        "D",
+		DifficultyColumn:   "E",
+		PronunciationColumn: "F",
+		ExamplesColumn:     "G",
+		SheetName:          "Sheet1",
+		SkipHeader:         true,
+		StartRow:           2, // By default, start from the second row (skip header)
 	}
 }
 
@@ -211,7 +207,7 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
                 topicRepo *database.TopicRepository, wordRepo *database.WordRepository, 
                 result *ImportResult, rowNum int) error {
 	// Get cell values
-	var word, translation, context, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation string
 	
 	// Check bounds for each column
 	if colIdx := columnToIndex(config.WordColumn); colIdx < len(row) {
@@ -220,8 +216,8 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 	if colIdx := columnToIndex(config.TranslationColumn); colIdx < len(row) {
 		translation = row[colIdx]
 	}
-	if colIdx := columnToIndex(config.ContextColumn); colIdx < len(row) {
-		context = row[colIdx]
+	if colIdx := columnToIndex(config.DescriptionColumn); colIdx < len(row) {
+		description = row[colIdx]
 	}
 	if colIdx := columnToIndex(config.TopicColumn); colIdx < len(row) {
 		topicName = row[colIdx]
@@ -235,7 +231,7 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 		}
 	}
 
-	return processWordData(word, translation, context, topicName, difficulty, pronunciation, 
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
 	                     topicMap, topicRepo, wordRepo, result, rowNum)
 }
 
@@ -249,7 +245,7 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	}
 	
 	// Обрабатываем формат: Английское слово,[транскрипция],перевод
-	var word, translation, context, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation string
 	
 	// Используем переданную тему
 	topicName = currentTopic
@@ -271,13 +267,13 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	
 	// Установка контекста - добавляем транскрипцию как часть контекста
 	if pronunciation != "" {
-		context = "Произношение: " + pronunciation
+		description = "Произношение: " + pronunciation
 	}
 	
 	// Устанавливаем среднюю сложность по умолчанию
 	difficulty = "3"
 	
-	return processWordData(word, translation, context, topicName, difficulty, pronunciation, 
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
 	                     topicMap, topicRepo, wordRepo, result, rowNum)
 }
 
@@ -314,7 +310,7 @@ func getOrCreateTopic(topicName string, topicMap map[string]int64, topicRepo *da
 }
 
 // processWordData handles the common logic for processing word data from any source
-func processWordData(word, translation, context, topicName, difficulty, pronunciation string, 
+func processWordData(word, translation, description, topicName, difficulty, pronunciation string, 
                      topicMap map[string]int64, topicRepo *database.TopicRepository, 
                      wordRepo *database.WordRepository, result *ImportResult, rowNum int) error {
 	// Clean up word data
@@ -354,7 +350,7 @@ func processWordData(word, translation, context, topicName, difficulty, pronunci
 		if strings.EqualFold(existingWord.Word, word) && existingWord.TopicID == topicID {
 			// Update existing word
 			existingWord.Translation = translation
-			existingWord.Context = context
+			existingWord.Description = description
 			existingWord.Difficulty = difficultyVal
 			existingWord.Pronunciation = pronunciation
 			
@@ -380,7 +376,7 @@ func processWordData(word, translation, context, topicName, difficulty, pronunci
 		newWord := &models.Word{
 			Word:         word,
 			Translation:  translation,
-			Context:      context,
+			Description:  description,
 			TopicID:      topicID,
 			Difficulty:   difficultyVal,
 			Pronunciation: pronunciation,
