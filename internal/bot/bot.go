@@ -5,7 +5,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1295,221 +1294,32 @@ func (b *Bot) handleToggleNotifications(userID int64, chatID int64) {
 
 // handleWordsPerDayChange updates user's words per day setting
 func (b *Bot) handleWordsPerDayChange(userID int64, chatID int64, count int) {
+	// Обновляем настройки пользователя
 	userRepo := database.NewUserRepository()
 	
-	// Get user
+	// Получаем пользователя
 	user, err := userRepo.GetByID(userID)
 	if err != nil {
-		log.Printf("Error getting user %d: %v", userID, err)
-		msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при получении ваших настроек. Пожалуйста, попробуйте позже.")
+		log.Printf("Ошибка при получении пользователя %d: %v", userID, err)
+		msg := tgbotapi.NewMessage(chatID, "❌ Произошла ошибка при обновлении настроек. Пожалуйста, попробуйте позже.")
 		b.api.Send(msg)
 		return
 	}
 	
-	// Update words per day
+	// Обновляем количество слов в день
 	user.WordsPerDay = count
 	if err := userRepo.Update(user); err != nil {
-		log.Printf("Error updating user words per day: %v", err)
-		msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при обновлении количества слов в день. Пожалуйста, попробуйте позже.")
+		log.Printf("Ошибка при обновлении настроек пользователя %d: %v", userID, err)
+		msg := tgbotapi.NewMessage(chatID, "❌ Произошла ошибка при обновлении настроек. Пожалуйста, попробуйте позже.")
 		b.api.Send(msg)
 		return
 	}
 	
-	// Send confirmation and show words per day settings again
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Количество слов в день установлено: %d", count))
+	// Отправляем подтверждение
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ Количество слов в день изменено на <b>%d</b>.", count))
+	msg.ParseMode = "HTML"
 	b.api.Send(msg)
 	
 	// Show words per day settings again
 	b.handleWordsPerDaySettings(userID, chatID)
-}
-
-// SendDailyWordsToChannel отправляет ежедневную подборку слов в указанный канал
-func (b *Bot) SendDailyWordsToChannel(channelID int64) error {
-	log.Printf("Отправка ежедневных слов в канал %d", channelID)
-	
-	// Получаем репозитории
-	wordRepo := database.NewWordRepository()
-	progressRepo := database.NewUserProgressRepository()
-	
-	// Администратор бота (используем для отслеживания прогресса)
-	adminID := getFirstAdminID(b.adminUserIDs)
-	if adminID == 0 {
-		return fmt.Errorf("не найден администратор бота для отслеживания прогресса")
-	}
-	
-	// Получаем слова для повторения
-	dueProgress, err := progressRepo.GetDueWordsForUser(adminID)
-	if err != nil {
-		return fmt.Errorf("ошибка при получении слов для повторения: %v", err)
-	}
-	
-	// Определяем, сколько слов нужно взять из повторений и сколько новых
-	const totalWords = 5
-	var wordsToSend []models.Word
-	var dueSent int
-	
-	// Сначала добавляем слова для повторения
-	for _, progress := range dueProgress {
-		word, err := wordRepo.GetByID(progress.WordID)
-		if err != nil {
-			log.Printf("Ошибка при получении слова ID=%d: %v", progress.WordID, err)
-			continue
-		}
-		
-		wordsToSend = append(wordsToSend, *word)
-		dueSent++
-		
-		// Автоматически отмечаем слово как просмотренное с качеством "Помню" (3)
-		b.sm2.Process(&progress, spaced_repetition.QualityResponse(3))
-		progressRepo.Update(&progress)
-		
-		if len(wordsToSend) >= totalWords {
-			break
-		}
-	}
-	
-	// Если нужно, добавляем новые слова
-	if len(wordsToSend) < totalWords {
-		// Получить все темы
-		topicRepo := database.NewTopicRepository()
-		topics, err := topicRepo.GetAll()
-		if err != nil {
-			return fmt.Errorf("ошибка при получении тем: %v", err)
-		}
-		
-		if len(topics) == 0 {
-			return fmt.Errorf("нет доступных тем")
-		}
-		
-		// Получаем случайные слова из каждой темы
-		for _, topic := range topics {
-			// Сколько еще слов нужно получить
-			remaining := totalWords - len(wordsToSend)
-			if remaining <= 0 {
-				break
-			}
-			
-			// Получаем случайные слова из этой темы
-			words, err := wordRepo.GetRandomWordsByTopic(topic.ID, remaining)
-			if err != nil {
-				log.Printf("Ошибка при получении случайных слов из темы %s: %v", topic.Name, err)
-				continue
-			}
-			
-			// Для каждого нового слова создаем запись прогресса
-			for _, word := range words {
-				// Проверяем, не повторяется ли слово
-				exists := false
-				for _, w := range wordsToSend {
-					if w.ID == word.ID {
-						exists = true
-						break
-					}
-				}
-				
-				if !exists {
-					// Добавляем слово в список отправки
-					wordsToSend = append(wordsToSend, word)
-					
-					// Создаем запись прогресса для этого слова
-					progress := &models.UserProgress{
-						UserID:          adminID,
-						WordID:          word.ID,
-						EasinessFactor:  2.5, // Начальное значение
-						Interval:        1,   // Через 1 день
-						Repetitions:     1,
-						LastQuality:     3,   // Средний уровень запоминания
-						ConsecutiveRight: 1,
-						LastReviewDate:  time.Now(),
-						NextReviewDate:  time.Now().AddDate(0, 0, 1),
-					}
-					progressRepo.Create(progress)
-				}
-				
-				if len(wordsToSend) >= totalWords {
-					break
-				}
-			}
-			
-			if len(wordsToSend) >= totalWords {
-				break
-			}
-		}
-	}
-	
-	// Если нет слов для отправки
-	if len(wordsToSend) == 0 {
-		return fmt.Errorf("нет слов для отправки")
-	}
-	
-	// Формируем и отправляем сообщение
-	message := b.formatDailyWordsMessage(wordsToSend, dueSent)
-	msg := tgbotapi.NewMessage(channelID, message)
-	msg.ParseMode = "HTML"
-	
-	_, err = b.api.Send(msg)
-	return err
-}
-
-// formatDailyWordsMessage форматирует сообщение с ежедневными словами
-func (b *Bot) formatDailyWordsMessage(words []models.Word, dueSent int) string {
-	var message strings.Builder
-	
-	// Заголовок
-	message.WriteString("<b>🔤 Ежедневная подборка английских слов</b>\n")
-	message.WriteString("━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-	
-	if dueSent > 0 {
-		message.WriteString(fmt.Sprintf("<i>Слов для повторения: %d</i>\n", dueSent))
-		if dueSent < len(words) {
-			message.WriteString(fmt.Sprintf("<i>Новых слов: %d</i>\n\n", len(words)-dueSent))
-		} else {
-			message.WriteString("\n")
-		}
-	} else {
-		message.WriteString("<i>Все слова новые</i>\n\n")
-	}
-	
-	// Добавляем каждое слово
-	for i, word := range words {
-		// Номер и слово с переводом
-		message.WriteString(fmt.Sprintf("<b>%d. %s</b> - <i>%s</i>\n", i+1, word.EnglishWord, word.Translation))
-		
-		// Если есть произношение, добавляем его
-		if word.Pronunciation != "" {
-			message.WriteString(fmt.Sprintf("   📢 <i>%s</i>\n", word.Pronunciation))
-		}
-		
-		// Пример использования
-		context := word.Context
-		if context == "" || (b.chatGPT != nil && rand.Intn(100) < 70) { // 70% шанс генерации нового контекста
-			if b.chatGPT != nil {
-				// Генерируем пример с помощью ChatGPT
-				newContext := b.chatGPT.GenerateExampleWithFallback(&word)
-				if newContext != "" {
-					context = newContext
-				}
-			}
-			
-			if context == "" {
-				context = fmt.Sprintf("Example with '%s'", word.EnglishWord)
-			}
-		}
-		
-		message.WriteString(fmt.Sprintf("   📝 %s\n\n", context))
-	}
-	
-	// Добавляем подпись
-	message.WriteString("━━━━━━━━━━━━━━━━━━━━━━━\n")
-	message.WriteString("📚 <i>Изучайте английский с интервальным повторением!</i>")
-	
-	return message.String()
-}
-
-// getFirstAdminID возвращает первый ID администратора из карты
-func getFirstAdminID(adminIDs map[int64]bool) int64 {
-	for id := range adminIDs {
-		return id
-	}
-	return 0
 } 

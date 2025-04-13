@@ -2,8 +2,6 @@ package database
 
 import (
 	"fmt"
-	"os"
-	"time"
 
 	"github.com/example/engbot/pkg/models"
 )
@@ -30,28 +28,11 @@ func (r *UserProgressRepository) GetByUserAndWord(userID int64, wordID int) (*mo
 func (r *UserProgressRepository) GetDueWordsForUser(userID int64) ([]models.UserProgress, error) {
 	var progress []models.UserProgress
 	
-	// Определяем тип базы данных
-	dbType := os.Getenv("DB_TYPE")
-	if dbType == "" {
-		dbType = "postgres" // По умолчанию postgres для совместимости
-	}
-	
-	// Выбираем правильный запрос в зависимости от типа БД
-	var query string
-	if dbType == "sqlite" {
-		query = `
-			SELECT * FROM user_progress
-			WHERE user_id = $1 AND next_review_date <= datetime('now')
-			ORDER BY next_review_date ASC
-		`
-	} else {
-		// Postgres
-		query = `
-			SELECT * FROM user_progress
-			WHERE user_id = $1 AND next_review_date <= NOW()
-			ORDER BY next_review_date ASC
-		`
-	}
+	query := `
+		SELECT * FROM user_progress
+		WHERE user_id = $1 AND next_review_date <= datetime('now')
+		ORDER BY next_review_date ASC
+	`
 	
 	err := DB.Select(&progress, query, userID)
 	if err != nil {
@@ -65,11 +46,12 @@ func (r *UserProgressRepository) Create(progress *models.UserProgress) error {
 	query := `
 		INSERT INTO user_progress (
 			user_id, word_id, last_review_date, next_review_date, 
-			interval, easiness_factor, repetitions, last_quality, consecutive_right
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, created_at, updated_at
+			interval, easiness_factor, repetitions, last_quality, consecutive_right,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
-	return DB.QueryRow(
+	
+	result, err := DB.Exec(
 		query,
 		progress.UserID,
 		progress.WordID,
@@ -80,91 +62,58 @@ func (r *UserProgressRepository) Create(progress *models.UserProgress) error {
 		progress.Repetitions,
 		progress.LastQuality,
 		progress.ConsecutiveRight,
-	).Scan(&progress.ID, &progress.CreatedAt, &progress.UpdatedAt)
+	)
+	
+	if err != nil {
+		return fmt.Errorf("failed to create progress: %v", err)
+	}
+	
+	// Получаем ID новой записи
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %v", err)
+	}
+	progress.ID = int(id)
+	
+	// Получаем created_at и updated_at
+	return DB.QueryRow("SELECT created_at, updated_at FROM user_progress WHERE id = $1", 
+		progress.ID).Scan(&progress.CreatedAt, &progress.UpdatedAt)
 }
 
 // Update modifies an existing progress record
 func (r *UserProgressRepository) Update(progress *models.UserProgress) error {
-	// Определяем тип базы данных
-	dbType := os.Getenv("DB_TYPE")
-	if dbType == "" {
-		dbType = "postgres" // По умолчанию postgres для совместимости
+	query := `
+		UPDATE user_progress SET 
+			last_review_date = $1,
+			next_review_date = $2,
+			interval = $3,
+			easiness_factor = $4,
+			repetitions = $5,
+			last_quality = $6,
+			consecutive_right = $7,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = $8
+	`
+	
+	_, err := DB.Exec(
+		query,
+		progress.LastReviewDate,
+		progress.NextReviewDate,
+		progress.Interval,
+		progress.EasinessFactor,
+		progress.Repetitions,
+		progress.LastQuality,
+		progress.ConsecutiveRight,
+		progress.ID,
+	)
+	
+	if err != nil {
+		return fmt.Errorf("failed to update progress: %v", err)
 	}
 	
-	var query string
-	var err error
-	
-	if dbType == "sqlite" {
-		// SQLite использует CURRENT_TIMESTAMP вместо NOW()
-		query = `
-			UPDATE user_progress SET 
-				last_review_date = $1,
-				next_review_date = $2,
-				interval = $3,
-				easiness_factor = $4,
-				repetitions = $5,
-				last_quality = $6,
-				consecutive_right = $7,
-				updated_at = CURRENT_TIMESTAMP
-			WHERE id = $8
-			RETURNING updated_at
-		`
-		// SQLite не поддерживает RETURNING напрямую, поэтому нужно сделать отдельно запрос
-		_, err = DB.Exec(
-			`UPDATE user_progress SET 
-				last_review_date = $1,
-				next_review_date = $2,
-				interval = $3,
-				easiness_factor = $4,
-				repetitions = $5,
-				last_quality = $6,
-				consecutive_right = $7,
-				updated_at = CURRENT_TIMESTAMP
-			WHERE id = $8`,
-			progress.LastReviewDate,
-			progress.NextReviewDate,
-			progress.Interval,
-			progress.EasinessFactor,
-			progress.Repetitions,
-			progress.LastQuality,
-			progress.ConsecutiveRight,
-			progress.ID,
-		)
-		
-		if err != nil {
-			return err
-		}
-		
-		// Получаем обновленное значение updated_at
-		return DB.QueryRow("SELECT updated_at FROM user_progress WHERE id = $1", progress.ID).Scan(&progress.UpdatedAt)
-		
-	} else {
-		// PostgreSQL использует NOW()
-		query = `
-			UPDATE user_progress SET 
-				last_review_date = $1,
-				next_review_date = $2,
-				interval = $3,
-				easiness_factor = $4,
-				repetitions = $5,
-				last_quality = $6,
-				consecutive_right = $7,
-				updated_at = NOW()
-			WHERE id = $8
-			RETURNING updated_at
-		`
-		return DB.QueryRow(
-			query,
-			progress.LastReviewDate,
-			progress.NextReviewDate,
-			progress.Interval,
-			progress.EasinessFactor,
-			progress.Repetitions,
-			progress.LastQuality,
-			progress.ConsecutiveRight,
-			progress.ID,
-		).Scan(&progress.UpdatedAt)
-	}
+	// Получаем обновленное значение updated_at
+	return DB.QueryRow("SELECT updated_at FROM user_progress WHERE id = $1", 
+		progress.ID).Scan(&progress.UpdatedAt)
 }
 
 // Delete removes a progress record
@@ -175,97 +124,21 @@ func (r *UserProgressRepository) Delete(id int) error {
 
 // CreateOrUpdate creates or updates a progress record
 func (r *UserProgressRepository) CreateOrUpdate(progress *models.UserProgress) error {
-	// Определяем тип базы данных
-	dbType := os.Getenv("DB_TYPE")
-	if dbType == "" {
-		dbType = "postgres" // По умолчанию postgres для совместимости
+	// Проверяем, существует ли запись
+	var existingID int
+	err := DB.QueryRow(
+		"SELECT id FROM user_progress WHERE user_id = $1 AND word_id = $2", 
+		progress.UserID, progress.WordID,
+	).Scan(&existingID)
+	
+	if err == nil {
+		// Запись существует, обновляем её
+		progress.ID = existingID
+		return r.Update(progress)
 	}
 	
-	var query string
-	var err error
-	
-	if dbType == "sqlite" {
-		// SQLite не поддерживает одновременно ON CONFLICT и RETURNING
-		// Сначала проверяем, существует ли запись
-		var existingID int
-		err = DB.QueryRow("SELECT id FROM user_progress WHERE user_id = $1 AND word_id = $2", 
-			progress.UserID, progress.WordID).Scan(&existingID)
-		
-		if err == nil {
-			// Запись существует, обновляем её
-			progress.ID = existingID
-			return r.Update(progress)
-		}
-		
-		// Запись не существует, создаем новую
-		query = `
-			INSERT INTO user_progress (
-				user_id, word_id, last_review_date, next_review_date, 
-				interval, easiness_factor, repetitions, last_quality, consecutive_right,
-				created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`
-		
-		result, err := DB.Exec(
-			query,
-			progress.UserID,
-			progress.WordID,
-			progress.LastReviewDate,
-			progress.NextReviewDate,
-			progress.Interval,
-			progress.EasinessFactor,
-			progress.Repetitions,
-			progress.LastQuality,
-			progress.ConsecutiveRight,
-		)
-		
-		if err != nil {
-			return err
-		}
-		
-		// Получаем ID новой записи
-		id, err := result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		progress.ID = int(id)
-		
-		// Получаем created_at и updated_at
-		return DB.QueryRow("SELECT created_at, updated_at FROM user_progress WHERE id = $1", 
-			progress.ID).Scan(&progress.CreatedAt, &progress.UpdatedAt)
-		
-	} else {
-		// PostgreSQL поддерживает ON CONFLICT и RETURNING
-		query = `
-			INSERT INTO user_progress (
-				user_id, word_id, last_review_date, next_review_date, 
-				interval, easiness_factor, repetitions, last_quality, consecutive_right
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			ON CONFLICT (user_id, word_id) DO UPDATE SET
-				last_review_date = EXCLUDED.last_review_date,
-				next_review_date = EXCLUDED.next_review_date,
-				interval = EXCLUDED.interval,
-				easiness_factor = EXCLUDED.easiness_factor,
-				repetitions = EXCLUDED.repetitions,
-				last_quality = EXCLUDED.last_quality,
-				consecutive_right = EXCLUDED.consecutive_right,
-				updated_at = NOW()
-			RETURNING id, created_at, updated_at
-		`
-		
-		return DB.QueryRow(
-			query,
-			progress.UserID,
-			progress.WordID,
-			progress.LastReviewDate,
-			progress.NextReviewDate,
-			progress.Interval,
-			progress.EasinessFactor,
-			progress.Repetitions,
-			progress.LastQuality,
-			progress.ConsecutiveRight,
-		).Scan(&progress.ID, &progress.CreatedAt, &progress.UpdatedAt)
-	}
+	// Запись не существует, создаем новую
+	return r.Create(progress)
 }
 
 // GetUserStatistics returns statistics about a user's progress
@@ -283,8 +156,8 @@ func (r *UserProgressRepository) GetUserStatistics(userID int64) (map[string]int
 	// Get words due today
 	var dueToday int
 	err = DB.Get(&dueToday, 
-		"SELECT COUNT(*) FROM user_progress WHERE user_id = $1 AND next_review_date <= $2", 
-		userID, time.Now().AddDate(0, 0, 1))
+		"SELECT COUNT(*) FROM user_progress WHERE user_id = $1 AND next_review_date <= datetime('now', '+1 day')", 
+		userID)
 	if err != nil {
 		return nil, err
 	}

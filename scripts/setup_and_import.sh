@@ -26,118 +26,84 @@ function print_error() {
 
 # Check requirements
 function check_requirements() {
-    print_message "Проверка необходимых программ..."
+    print_message "Checking requirements..."
     
-    # Check for go
+    # Check if Go is installed
     if ! command -v go &> /dev/null; then
-        print_error "Go не установлен. Пожалуйста, установите Go для запуска бота."
-        exit 1
+        print_error "Go is not installed. Please install Go first."
+        return 1
     fi
     
-    # Check for PostgreSQL
-    if ! command -v psql &> /dev/null; then
-        print_warning "PostgreSQL не установлен. Для работы бота требуется доступ к PostgreSQL."
-    fi
-    
-    print_success "Все необходимые программы установлены."
+    print_success "All requirements are met!"
+    return 0
 }
 
 # Setup environment
 function setup_env() {
-    print_message "Настройка окружения..."
+    print_message "Setting up environment..."
     
-    # Check if .env file exists
-    if [ -f ".env" ]; then
-        print_warning "Файл .env уже существует. Хотите пересоздать его? (y/n): "
-        read -r ANSWER
-        if [ "$ANSWER" != "y" ] && [ "$ANSWER" != "Y" ]; then
-            print_message "Пропускаем создание .env файла."
-            return
+    # Check if .env file already exists
+    if [ -f .env ]; then
+        print_warning ".env file already exists. Do you want to overwrite it? (y/n)"
+        read -r overwrite
+        if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+            print_message "Keeping existing .env file."
+            return 0
         fi
     fi
     
-    print_message "Создание файла .env с настройками..."
-    
     # Get Telegram bot token
-    echo -n "Введите токен Telegram бота: "
-    read -r BOT_TOKEN
+    print_message "Enter your Telegram bot token (obtained from @BotFather):"
+    read -r telegram_token
     
-    # Get database connection info
-    echo -n "Введите имя пользователя PostgreSQL (по умолчанию postgres): "
-    read -r DB_USER
-    DB_USER=${DB_USER:-postgres}
+    # Database path
+    print_message "Enter path for SQLite database (leave empty for default ~/.engbot/database.db):"
+    read -r db_path
     
-    echo -n "Введите пароль PostgreSQL: "
-    read -rs DB_PASSWORD
-    echo ""
+    # OpenAI API key (optional)
+    print_message "Enter your OpenAI API key (optional, for AI-powered features):"
+    read -r openai_key
     
-    echo -n "Введите имя базы данных (по умолчанию engbot): "
-    read -r DB_NAME
-    DB_NAME=${DB_NAME:-engbot}
-    
-    echo -n "Введите хост базы данных (по умолчанию localhost): "
-    read -r DB_HOST
-    DB_HOST=${DB_HOST:-localhost}
-    
-    echo -n "Введите порт базы данных (по умолчанию 5432): "
-    read -r DB_PORT
-    DB_PORT=${DB_PORT:-5432}
-    
-    # Optional OpenAI API key
-    echo -n "Введите ключ API OpenAI (опционально): "
-    read -r OPENAI_API_KEY
-    
-    # Write to .env file
+    # Create .env file
     cat > .env << EOF
-# Telegram bot token
-TELEGRAM_BOT_TOKEN=$BOT_TOKEN
+# Telegram Bot Settings
+TELEGRAM_BOT_TOKEN=$telegram_token
 
-# Database connection
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
-DB_NAME=$DB_NAME
-DB_HOST=$DB_HOST
-DB_PORT=$DB_PORT
+# Database Settings
+DB_PATH=$db_path
 
-# OpenAI API for advanced features (optional)
-OPENAI_API_KEY=$OPENAI_API_KEY
+# OpenAI API Settings (optional)
+OPENAI_API_KEY=$openai_key
 EOF
     
-    print_success "Файл .env успешно создан."
+    print_success ".env file created successfully!"
+    return 0
 }
 
 # Import words function
 function import_words() {
-    local file_path="$1"
+    local file="$1"
     
-    # Check if the file exists
-    if [ ! -f "$file_path" ]; then
-        print_error "File not found: $file_path"
-        return 1
+    if [ -z "$file" ]; then
+        print_error "No file specified for import."
+        exit 1
     fi
     
-    # Check file extension to determine format
-    local extension="${file_path##*.}"
-    local format=""
-    
-    if [ "$extension" == "xlsx" ] || [ "$extension" == "xls" ]; then
-        format="Excel"
-    elif [ "$extension" == "csv" ]; then
-        format="CSV"
-    else
-        print_error "Unsupported file format: .$extension (supported: xlsx, xls, csv)"
-        return 1
+    if [ ! -f "$file" ]; then
+        print_error "File not found: $file."
+        exit 1
     fi
     
-    print_message "Importing words from $format file: $file_path..."
+    print_message "Importing words from $file..."
     
     # Run the import command
-    if go run main.go -import -file "$file_path"; then
-        print_success "Words imported successfully!"
-        return 0
+    go run main.go -import -file="$file"
+    
+    if [ $? -eq 0 ]; then
+        print_success "Words successfully imported from $file."
     else
-        print_error "Failed to import words. Check the logs for details."
-        return 1
+        print_error "Failed to import words from $file."
+        exit 1
     fi
 }
 

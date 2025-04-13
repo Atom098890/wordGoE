@@ -3,46 +3,48 @@ package database
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"           // PostgreSQL driver
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	_ "github.com/mattn/go-sqlite3"
 )
 
-// DB is the database connection
+// DB is the global database connection
 var DB *sqlx.DB
 
 // Connect establishes a connection to the database
 func Connect() error {
-	// SQLite connection
-	var err error
-	
-	// Создаем директорию для БД, если она не существует
-	dbDir := "./data"
-	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dbDir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory for database: %w", err)
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		// Default path if not specified
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get user home directory: %v", err)
 		}
+		dbPath = filepath.Join(homeDir, ".engbot", "database.db")
 	}
-	
-	// Подключаемся к SQLite
-	DB, err = sqlx.Connect("sqlite3", "./data/engbot.db")
+
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create database directory: %v", err)
+	}
+
+	// Open database connection
+	var err error
+	DB, err = sqlx.Connect("sqlite3", dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SQLite database: %w", err)
+		return fmt.Errorf("failed to connect to database: %v", err)
 	}
-	
-	// Включаем foreign keys для SQLite
+
+	// Enable foreign keys
 	_, err = DB.Exec("PRAGMA foreign_keys = ON")
 	if err != nil {
-		return fmt.Errorf("failed to enable foreign keys: %w", err)
+		return fmt.Errorf("failed to enable foreign keys: %v", err)
 	}
-	
-	// Initialize database schema if needed
-	if err := initializeSQLiteSchema(); err != nil {
-		return fmt.Errorf("failed to initialize database schema: %w", err)
-	}
-	
-	return nil
+
+	// Initialize schema
+	return initializeSQLiteSchema()
 }
 
 // Close closes the database connection
@@ -53,32 +55,32 @@ func Close() error {
 	return nil
 }
 
-// initializeSQLiteSchema создает необходимые таблицы если они не существуют
+// initializeSQLiteSchema creates necessary tables if they don't exist
 func initializeSQLiteSchema() error {
 	// Create users table
 	_, err := DB.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY,
+			telegram_id INTEGER UNIQUE NOT NULL,
 			username TEXT,
 			first_name TEXT,
 			last_name TEXT,
+			language_code TEXT,
+			is_premium BOOLEAN DEFAULT FALSE,
+			daily_words_limit INTEGER DEFAULT 5,
 			is_admin BOOLEAN DEFAULT FALSE,
-			preferred_topics TEXT, -- Stored as JSON array
-			notification_enabled BOOLEAN DEFAULT TRUE,
-			notification_hour INTEGER DEFAULT 8,
-			words_per_day INTEGER DEFAULT 5,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create users table: %w", err)
+		return fmt.Errorf("failed to create users table: %v", err)
 	}
-	
+
 	// Create topics table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS topics (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id INTEGER PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE,
 			description TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -86,200 +88,69 @@ func initializeSQLiteSchema() error {
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create topics table: %w", err)
+		return fmt.Errorf("failed to create topics table: %v", err)
 	}
-	
+
 	// Create words table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS words (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			english_word TEXT NOT NULL,
-			translation TEXT NOT NULL,
-			context TEXT,
+			id INTEGER PRIMARY KEY,
 			topic_id INTEGER,
-			difficulty INTEGER DEFAULT 3,
+			word TEXT NOT NULL,
+			translation TEXT NOT NULL,
+			description TEXT,
 			pronunciation TEXT,
+			examples TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id),
-			UNIQUE(english_word, topic_id)
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL,
+			UNIQUE(word, topic_id)
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create words table: %w", err)
+		return fmt.Errorf("failed to create words table: %v", err)
 	}
-	
+
 	// Create user_progress table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS user_progress (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id INTEGER PRIMARY KEY,
 			user_id INTEGER NOT NULL,
 			word_id INTEGER NOT NULL,
-			repetitions INTEGER DEFAULT 0,
-			easiness_factor REAL DEFAULT 2.5,
-			interval INTEGER DEFAULT 0,
-			next_review_date TIMESTAMP,
 			last_review_date TIMESTAMP,
+			next_review_date TIMESTAMP,
+			interval INTEGER DEFAULT 0,
+			easiness_factor REAL DEFAULT 2.5,
+			repetitions INTEGER DEFAULT 0,
 			last_quality INTEGER DEFAULT 0,
 			consecutive_right INTEGER DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id),
-			FOREIGN KEY (word_id) REFERENCES words(id),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
 			UNIQUE(user_id, word_id)
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create user_progress table: %w", err)
+		return fmt.Errorf("failed to create user_progress table: %v", err)
 	}
-	
+
 	// Create test_results table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS test_results (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id INTEGER PRIMARY KEY,
 			user_id INTEGER NOT NULL,
-			test_type TEXT NOT NULL,
-			total_words INTEGER NOT NULL,
-			correct_words INTEGER NOT NULL,
-			topics TEXT, -- Stored as JSON array
-			test_date TIMESTAMP,
-			duration INTEGER,
+			topic_id INTEGER,
+			score INTEGER NOT NULL,
+			max_score INTEGER NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id)
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create test_results table: %w", err)
+		return fmt.Errorf("failed to create test_results table: %v", err)
 	}
-	
+
 	return nil
 }
-
-// migrateUserProgressTable updates the user_progress table schema if needed
-func migrateUserProgressTable() error {
-	// Check if next_review_date column exists
-	var count int
-	err := DB.Get(&count, `SELECT COUNT(*) FROM pragma_table_info('user_progress') WHERE name = 'next_review_date'`)
-	if err != nil {
-		return fmt.Errorf("failed to check if next_review_date column exists: %w", err)
-	}
-	
-	// If next_review_date doesn't exist but next_review does, rename the column
-	if count == 0 {
-		// Check if the old column exists
-		err = DB.Get(&count, `SELECT COUNT(*) FROM pragma_table_info('user_progress') WHERE name = 'next_review'`)
-		if err != nil {
-			return fmt.Errorf("failed to check if next_review column exists: %w", err)
-		}
-		
-		if count > 0 {
-			// SQLite doesn't support renaming columns directly in older versions
-			// We need to create a new table and copy data
-			fmt.Println("Migrating user_progress table to new schema...")
-			
-			// Begin transaction
-			tx, err := DB.Beginx()
-			if err != nil {
-				return fmt.Errorf("failed to begin transaction: %w", err)
-			}
-			
-			// Create new table
-			_, err = tx.Exec(`
-				CREATE TABLE user_progress_new (
-					id INTEGER PRIMARY KEY AUTOINCREMENT,
-					user_id INTEGER NOT NULL,
-					word_id INTEGER NOT NULL,
-					repetitions INTEGER DEFAULT 0,
-					easiness_factor REAL DEFAULT 2.5,
-					interval INTEGER DEFAULT 0,
-					next_review_date TIMESTAMP,
-					last_review_date TIMESTAMP,
-					last_quality INTEGER DEFAULT 0,
-					consecutive_right INTEGER DEFAULT 0,
-					created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (user_id) REFERENCES users(id),
-					FOREIGN KEY (word_id) REFERENCES words(id),
-					UNIQUE(user_id, word_id)
-				)
-			`)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to create new user_progress table: %w", err)
-			}
-			
-			// Copy data from old table to new table
-			_, err = tx.Exec(`
-				INSERT INTO user_progress_new (
-					id, user_id, word_id, repetitions, easiness_factor, interval,
-					next_review_date, last_review_date, last_quality, consecutive_right,
-					created_at, updated_at
-				)
-				SELECT 
-					id, user_id, word_id, repetitions, easiness_factor, interval,
-					next_review, last_reviewed, 0, 0,
-					CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-				FROM user_progress
-			`)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to copy data to new user_progress table: %w", err)
-			}
-			
-			// Drop old table
-			_, err = tx.Exec(`DROP TABLE user_progress`)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to drop old user_progress table: %w", err)
-			}
-			
-			// Rename new table to old name
-			_, err = tx.Exec(`ALTER TABLE user_progress_new RENAME TO user_progress`)
-			if err != nil {
-				tx.Rollback()
-				return fmt.Errorf("failed to rename new user_progress table: %w", err)
-			}
-			
-			// Commit transaction
-			if err := tx.Commit(); err != nil {
-				return fmt.Errorf("failed to commit transaction: %w", err)
-			}
-			
-			fmt.Println("User_progress table migration completed successfully.")
-		} else {
-			// Add missing columns if table exists but columns don't
-			fmt.Println("Adding missing columns to user_progress table...")
-			_, err := DB.Exec(`ALTER TABLE user_progress ADD COLUMN next_review_date TIMESTAMP`)
-			if err != nil {
-				return fmt.Errorf("failed to add next_review_date column: %w", err)
-			}
-			
-			_, err = DB.Exec(`ALTER TABLE user_progress ADD COLUMN last_review_date TIMESTAMP`)
-			if err != nil {
-				return fmt.Errorf("failed to add last_review_date column: %w", err)
-			}
-			
-			_, err = DB.Exec(`ALTER TABLE user_progress ADD COLUMN last_quality INTEGER DEFAULT 0`)
-			if err != nil {
-				return fmt.Errorf("failed to add last_quality column: %w", err)
-			}
-			
-			_, err = DB.Exec(`ALTER TABLE user_progress ADD COLUMN consecutive_right INTEGER DEFAULT 0`)
-			if err != nil {
-				return fmt.Errorf("failed to add consecutive_right column: %w", err)
-			}
-			
-			_, err = DB.Exec(`ALTER TABLE user_progress ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`)
-			if err != nil {
-				return fmt.Errorf("failed to add created_at column: %w", err)
-			}
-			
-			_, err = DB.Exec(`ALTER TABLE user_progress ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`)
-			if err != nil {
-				return fmt.Errorf("failed to add updated_at column: %w", err)
-			}
-		}
-	}
-	
-	return nil
-} 

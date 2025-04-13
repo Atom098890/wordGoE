@@ -2,8 +2,6 @@ package scheduler
 
 import (
 	"log"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/example/engbot/internal/database"
@@ -19,7 +17,6 @@ type Scheduler struct {
 // Notifier interface for sending notifications
 type Notifier interface {
 	SendReminders(userID int64, count int) error
-	SendDailyWordsToChannel(channelID int64) error
 }
 
 // New creates a new scheduler instance
@@ -35,18 +32,6 @@ func New(notifier Notifier) *Scheduler {
 func (s *Scheduler) Start() {
 	// Schedule hourly check for users who need notifications
 	s.scheduler.Every(1).Hour().Do(s.checkAndSendReminders)
-	
-	// Schedule daily word delivery to channel - every day at 8 AM UTC
-	channelID := getChannelIDFromEnv()
-	if channelID != 0 {
-		s.scheduler.Every(1).Day().At("08:00").Do(func() {
-			log.Println("Sending daily words to channel...")
-			if err := s.notifier.SendDailyWordsToChannel(channelID); err != nil {
-				log.Printf("Error sending daily words to channel: %v", err)
-			}
-		})
-		log.Printf("Scheduled daily words delivery to channel %d at 8:00 UTC", channelID)
-	}
 	
 	// Start the scheduler in a non-blocking manner
 	s.scheduler.StartAsync()
@@ -114,21 +99,4 @@ func (s *Scheduler) RunManualCheck(userID int64) error {
 	}
 	
 	return nil
-}
-
-// getChannelIDFromEnv gets the channel ID from environment variable
-func getChannelIDFromEnv() int64 {
-	channelIDStr := os.Getenv("TELEGRAM_CHANNEL_ID")
-	if channelIDStr == "" {
-		log.Println("TELEGRAM_CHANNEL_ID not set, daily channel delivery disabled")
-		return 0
-	}
-	
-	channelID, err := strconv.ParseInt(channelIDStr, 10, 64)
-	if err != nil {
-		log.Printf("Invalid TELEGRAM_CHANNEL_ID: %v", err)
-		return 0
-	}
-	
-	return channelID
 } 
