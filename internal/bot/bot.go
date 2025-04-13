@@ -1078,7 +1078,7 @@ func formatImportReport(result *excel.ImportResult) string {
 	
 	// Показываем предупреждения, если они есть
 	if len(realErrors) > 0 {
-		reportText += fmt.Sprintf("\n⚠️ Предупреждения при импорте:\n")
+		reportText += "\n⚠️ Предупреждения при импорте:\n"
 		
 		// Показываем максимум 10 первых ошибок
 		errorsToShow := len(realErrors)
