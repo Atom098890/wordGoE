@@ -18,6 +18,17 @@ func main() {
 	// Parse command-line flags
 	importMode := flag.Bool("import", false, "Run in import mode to import Excel file")
 	excelFile := flag.String("file", "", "Excel file to import in import mode")
+	
+	// Import configuration flags
+	sheetName := flag.String("sheet", "Sheet1", "Sheet name in Excel file")
+	wordCol := flag.String("word-col", "A", "Column with English words")
+	transCol := flag.String("trans-col", "B", "Column with translations")
+	contextCol := flag.String("context-col", "C", "Column with context/description")
+	topicCol := flag.String("topic-col", "D", "Column with topics")
+	diffCol := flag.String("diff-col", "E", "Column with difficulty ratings")
+	pronCol := flag.String("pron-col", "F", "Column with pronunciations")
+	examplesCol := flag.String("examples-col", "G", "Column with usage examples")
+	
 	flag.Parse()
 
 	// Load environment variables
@@ -37,7 +48,23 @@ func main() {
 		if *excelFile == "" {
 			log.Fatal("Excel file path is required in import mode")
 		}
-		if err := runImport(*excelFile); err != nil {
+		
+		// Create import configuration 
+		config := excel.ImportConfig{
+			FilePath:            *excelFile,
+			SheetName:           *sheetName,
+			WordColumn:          *wordCol,
+			TranslationColumn:   *transCol,
+			DescriptionColumn:   *contextCol,
+			TopicColumn:         *topicCol,
+			DifficultyColumn:    *diffCol,
+			PronunciationColumn: *pronCol,
+			ExamplesColumn:      *examplesCol,
+			HeaderRow:           1,
+			StartRow:            2,
+		}
+		
+		if err := runImport(config); err != nil {
 			log.Fatalf("Import failed: %v", err)
 		}
 		return
@@ -65,17 +92,14 @@ func main() {
 }
 
 // runImport imports words from an Excel file
-func runImport(filePath string) error {
+func runImport(config excel.ImportConfig) error {
 	// Check if the file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return fmt.Errorf("file does not exist: %s", filePath)
+	if _, err := os.Stat(config.FilePath); os.IsNotExist(err) {
+		return fmt.Errorf("file does not exist: %s", config.FilePath)
 	}
 
 	// Use the Excel importer functionality
-	fmt.Printf("Importing from %s...\n", filePath)
-	
-	// Create import configuration
-	config := excel.DefaultImportConfig(filePath)
+	fmt.Printf("Importing from %s...\n", config.FilePath)
 	
 	// Perform the import
 	result, err := excel.ImportWords(config)
@@ -87,8 +111,9 @@ func runImport(filePath string) error {
 	fmt.Printf("Import complete:\n")
 	fmt.Printf("- Total rows processed: %d\n", result.TotalProcessed)
 	fmt.Printf("- Topics created: %d\n", result.TopicsCreated)
-	fmt.Printf("- Words created: %d\n", result.WordsCreated)
-	fmt.Printf("- Words updated: %d\n", result.WordsUpdated)
+	fmt.Printf("- Words created: %d\n", result.Created)
+	fmt.Printf("- Words updated: %d\n", result.Updated)
+	fmt.Printf("- Words skipped: %d\n", result.Skipped)
 	
 	// Print errors if any
 	if len(result.Errors) > 0 {

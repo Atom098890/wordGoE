@@ -545,7 +545,7 @@ func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 
 // showWord displays a word with context to the user
 func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
-	// Generate example with ChatGPT if available, otherwise use stored context
+	// Generate Example for Context if empty
 	var context string
 	var translation string
 	
@@ -554,12 +554,8 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 		context = b.chatGPT.GenerateExampleWithFallback(&word)
 	}
 	
-	if context == "" && word.Context != "" {
-		// Use stored context if available
-		context = word.Context
-	} else if context == "" {
-		// Create a simple context if nothing else is available
-		context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.EnglishWord)
+	if context == "" {
+		context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.Word)
 	}
 	
 	// Get translation of the context if possible
@@ -574,7 +570,7 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 	
 	// Format the word card with improved visual separation
 	wordCard := "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-	wordCard += fmt.Sprintf("*🔤 %s* - _%s_\n\n", word.EnglishWord, word.Translation)
+	wordCard += fmt.Sprintf("*🔤 %s* - _%s_\n\n", word.Word, word.Translation)
 	
 	// Add pronunciation if available
 	if word.Pronunciation != "" {
@@ -871,7 +867,7 @@ func (b *Bot) handleQualityResponse(userID int64, chatID int64, wordID int, qual
 	
 	// Формируем сообщение с информацией о прогрессе
 	responseMsg := "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-	responseMsg += fmt.Sprintf("%s *%s* - _%s_\n\n", qualityEmoji, word.EnglishWord, word.Translation)
+	responseMsg += fmt.Sprintf("%s *%s* - _%s_\n\n", qualityEmoji, word.Word, word.Translation)
 	
 	// Добавляем информацию о прогрессе
 	nextDate := progress.NextReviewDate.Format("02.01.2006")
@@ -1038,8 +1034,9 @@ func formatImportReport(result *excel.ImportResult) string {
 		"📊 Статистика импорта:\n"+
 		fmt.Sprintf("- Обработано строк: %d\n", result.TotalProcessed)+
 		fmt.Sprintf("- Создано тем: %d\n", result.TopicsCreated)+
-		fmt.Sprintf("- Добавлено новых слов: %d\n", result.WordsCreated)+
-		fmt.Sprintf("- Обновлено существующих слов: %d\n", result.WordsUpdated)
+		fmt.Sprintf("- Добавлено новых слов: %d\n", result.Created)+
+		fmt.Sprintf("- Обновлено существующих слов: %d\n", result.Updated)+
+		fmt.Sprintf("- Пропущено слов: %d\n", result.Skipped)
 	
 	// Проверяем, сколько строк было пропущено
 	skippedRows := 0

@@ -60,33 +60,35 @@ func (r *WordRepository) Create(word *models.Word) error {
 	
 	if DB.DriverName() == "postgres" {
 		query = `
-			INSERT INTO words (english_word, translation, context, topic_id, difficulty, pronunciation)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO words (english_word, translation, description, topic_id, difficulty, pronunciation, examples)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			RETURNING id, created_at, updated_at
 		`
 		return DB.QueryRow(
 			query,
-			word.EnglishWord,
+			word.Word,
 			word.Translation,
 			word.Context,
 			word.TopicID,
 			word.Difficulty,
 			word.Pronunciation,
+			word.Examples,
 		).Scan(&word.ID, &word.CreatedAt, &word.UpdatedAt)
 	} else {
 		// Для SQLite (без RETURNING)
 		query = `
-			INSERT INTO words (english_word, translation, context, topic_id, difficulty, pronunciation, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			INSERT INTO words (word, translation, description, topic_id, difficulty, pronunciation, examples, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`
 		result, err := DB.Exec(
 			query,
-			word.EnglishWord,
+			word.Word,
 			word.Translation,
 			word.Context,
 			word.TopicID,
 			word.Difficulty,
 			word.Pronunciation,
+			word.Examples,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create word: %v", err)
@@ -120,45 +122,49 @@ func (r *WordRepository) Update(word *models.Word) error {
 			UPDATE words SET 
 				english_word = $1,
 				translation = $2,
-				context = $3,
+				description = $3,
 				topic_id = $4,
 				difficulty = $5,
 				pronunciation = $6,
+				examples = $7,
 				updated_at = NOW()
-			WHERE id = $7
+			WHERE id = $8
 			RETURNING updated_at
 		`
 		return DB.QueryRow(
 			query,
-			word.EnglishWord,
+			word.Word,
 			word.Translation,
 			word.Context,
 			word.TopicID,
 			word.Difficulty,
 			word.Pronunciation,
+			word.Examples,
 			word.ID,
 		).Scan(&word.UpdatedAt)
 	} else {
 		// Для SQLite (без RETURNING)
 		query = `
 			UPDATE words SET 
-				english_word = ?,
+				word = ?,
 				translation = ?,
-				context = ?,
+				description = ?,
 				topic_id = ?,
 				difficulty = ?,
 				pronunciation = ?,
+				examples = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`
 		_, err := DB.Exec(
 			query,
-			word.EnglishWord,
+			word.Word,
 			word.Translation,
 			word.Context,
 			word.TopicID,
 			word.Difficulty,
 			word.Pronunciation,
+			word.Examples,
 			word.ID,
 		)
 		if err != nil {
@@ -197,33 +203,26 @@ func (r *WordRepository) Delete(id int) error {
 // SearchWords searches for words by pattern matching
 func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 	var words []models.Word
-	
-	// Разные реализации запроса в зависимости от типа БД
 	var sqlQuery string
+	pattern := "%" + query + "%"
 	
 	if DB.DriverName() == "postgres" {
-		// В PostgreSQL используем ILIKE для регистронезависимого поиска
 		sqlQuery = `
 			SELECT * FROM words 
 			WHERE english_word ILIKE $1 OR translation ILIKE $1
 			ORDER BY english_word
 		`
-	} else {
-		// В SQLite используем LIKE и функции LOWER
-		sqlQuery = `
-			SELECT * FROM words 
-			WHERE LOWER(english_word) LIKE LOWER(?) OR LOWER(translation) LIKE LOWER(?)
-			ORDER BY english_word
-		`
-	}
-	
-	if DB.DriverName() == "postgres" {
-		err := DB.Select(&words, sqlQuery, "%"+query+"%")
+		err := DB.Select(&words, sqlQuery, pattern)
 		if err != nil {
 			return nil, fmt.Errorf("failed to search words: %v", err)
 		}
 	} else {
-		err := DB.Select(&words, sqlQuery, "%"+query+"%", "%"+query+"%")
+		sqlQuery = `
+			SELECT * FROM words 
+			WHERE LOWER(word) LIKE LOWER(?) OR LOWER(translation) LIKE LOWER(?)
+			ORDER BY word
+		`
+		err := DB.Select(&words, sqlQuery, pattern, pattern)
 		if err != nil {
 			return nil, fmt.Errorf("failed to search words: %v", err)
 		}
@@ -262,7 +261,7 @@ func GetWordByID(wordID int) (*models.Word, error) {
 	
 	// Используем совместимый с SQLite и PostgreSQL запрос
 	query := `
-		SELECT w.id, w.english, w.translation, w.context, w.difficulty, w.topic_id, t.name as topic
+		SELECT w.id, w.english_word as english_word, w.translation, w.description, w.difficulty, w.topic_id, t.name as topic
 		FROM words w
 		JOIN topics t ON w.topic_id = t.id
 		WHERE w.id = ?

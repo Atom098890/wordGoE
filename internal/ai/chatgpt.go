@@ -63,10 +63,8 @@ type ChatResponse struct {
 // GenerateExample generates an example sentence for the given word
 func (c *ChatGPT) GenerateExample(word *models.Word) (string, error) {
 	prompt := fmt.Sprintf(
-		"Создай пример предложения на английском языке, используя слово '%s' (перевод: '%s'). "+
-			"Предложение должно быть простым, понятным и показывать типичное использование слова в контексте. "+
-			"Верни только само предложение, без дополнительных пояснений.",
-		word.EnglishWord, word.Translation,
+		"Generate a short, practical example sentence in English that naturally includes the word '%s' (which translates to '%s' in Russian).",
+		word.Word, word.Translation,
 	)
 
 	messages := []Message{
@@ -126,7 +124,7 @@ func (c *ChatGPT) GenerateExampleWithFallback(word *models.Word) string {
 	example, err := c.GenerateExample(word)
 	if err != nil {
 		// Log the error and fall back to the stored context
-		fmt.Printf("Error generating example for '%s': %v\n", word.EnglishWord, err)
+		fmt.Printf("Error generating example for '%s': %v\n", word.Word, err)
 		
 		// If there's a stored context, use it
 		if word.Context != "" {
@@ -134,7 +132,7 @@ func (c *ChatGPT) GenerateExampleWithFallback(word *models.Word) string {
 		}
 		
 		// If no stored context, create a basic example
-		return fmt.Sprintf("This is an example of the word '%s'.", word.EnglishWord)
+		return fmt.Sprintf("This is an example of the word '%s'.", word.Word)
 	}
 	
 	return example
@@ -219,7 +217,7 @@ func (c *ChatGPT) GenerateTextWithWords(words []models.Word, count int) (string,
 		if i > 0 {
 			wordList += ", "
 		}
-		wordList += words[i].EnglishWord
+		wordList += words[i].Word
 	}
 	
 	prompt := fmt.Sprintf(

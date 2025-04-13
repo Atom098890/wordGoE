@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/example/engbot/pkg/models"
@@ -306,9 +307,57 @@ func (r *UserRepository) GetUsersForNotification(hour int) ([]models.User, error
 
 // getUsersWithCondition is a helper function to get users with a specific condition
 func (r *UserRepository) getUsersWithCondition(condition string, args ...interface{}) ([]models.User, error) {
-	query := "SELECT id, username, first_name, last_name, is_admin, preferred_topics, notification_enabled, notification_hour, words_per_day, created_at, updated_at FROM users WHERE " + condition
+	// Получаем информацию о колонках в таблице
+	rows, err := DB.Query("PRAGMA table_info(users)")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table info: %v", err)
+	}
+	defer rows.Close()
 	
-	rows, err := DB.Query(query, args...)
+	// Создаем карту существующих колонок
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, type_ string
+		var dflt_value interface{}
+		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
+			return nil, fmt.Errorf("failed to scan column info: %v", err)
+		}
+		columns[name] = true
+	}
+	
+	// Проверяем наличие обязательных колонок
+	requiredColumns := []string{"id", "username", "first_name", "last_name", "is_admin"}
+	for _, col := range requiredColumns {
+		if !columns[col] {
+			return nil, fmt.Errorf("required column '%s' not found in users table", col)
+		}
+	}
+	
+	// Строим запрос на основе существующих колонок
+	selectColumns := "id, username, first_name, last_name, is_admin"
+	
+	// Добавляем опциональные колонки, если они существуют
+	optionalColumns := map[string]string{
+		"preferred_topics":      "'{}'", // Пустой JSON массив по умолчанию
+		"notification_enabled":  "1",    // Включено по умолчанию
+		"notification_hour":     "8",    // 8:00 по умолчанию
+		"words_per_day":         "5",    // 5 слов в день по умолчанию
+		"created_at":            "CURRENT_TIMESTAMP",
+		"updated_at":            "CURRENT_TIMESTAMP",
+	}
+	
+	for col, defaultValue := range optionalColumns {
+		if columns[col] {
+			selectColumns += ", " + col
+		} else {
+			selectColumns += ", " + defaultValue + " AS " + col
+		}
+	}
+	
+	query := "SELECT " + selectColumns + " FROM users WHERE " + condition
+	
+	rows, err = DB.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get users with condition: %v", err)
 	}
@@ -341,7 +390,9 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 		if preferredTopicsJSON != "" {
 			err = json.Unmarshal([]byte(preferredTopicsJSON), &user.PreferredTopics)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse preferred topics: %v", err)
+				log.Printf("Warning: failed to parse preferred topics for user %d: %v", user.ID, err)
+				// Продолжаем работу даже с ошибкой парсинга JSON
+				user.PreferredTopics = []int64{}
 			}
 		}
 		

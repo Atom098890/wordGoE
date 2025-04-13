@@ -83,6 +83,60 @@ EOF
 # Import words function
 function import_words() {
     local file="$1"
+    shift
+    
+    # Default import parameters
+    local sheet="Sheet1"
+    local word_col="A"
+    local trans_col="B"
+    local context_col="C"
+    local topic_col="D"
+    local diff_col="E"
+    local pron_col="F"
+    local examples_col="G"
+    
+    # Parse additional options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sheet)
+                sheet="$2"
+                shift 2
+                ;;
+            --word-col)
+                word_col="$2"
+                shift 2
+                ;;
+            --trans-col)
+                trans_col="$2"
+                shift 2
+                ;;
+            --context-col)
+                context_col="$2"
+                shift 2
+                ;;
+            --topic-col)
+                topic_col="$2"
+                shift 2
+                ;;
+            --diff-col)
+                diff_col="$2"
+                shift 2
+                ;;
+            --pron-col)
+                pron_col="$2"
+                shift 2
+                ;;
+            --examples-col)
+                examples_col="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
     
     if [ -z "$file" ]; then
         print_error "No file specified for import."
@@ -95,9 +149,31 @@ function import_words() {
     fi
     
     print_message "Importing words from $file..."
+    print_message "Using configuration:"
+    print_message "  - Sheet: $sheet"
+    print_message "  - Word column: $word_col"
+    print_message "  - Translation column: $trans_col"
+    print_message "  - Context column: $context_col"
+    print_message "  - Topic column: $topic_col"
+    print_message "  - Difficulty column: $diff_col"
+    print_message "  - Pronunciation column: $pron_col"
+    print_message "  - Examples column: $examples_col"
+    
+    # Build import command with options
+    local import_cmd="go run main.go -import -file=\"$file\""
+    
+    # Add options
+    import_cmd+=" -sheet=\"$sheet\""
+    import_cmd+=" -word-col=\"$word_col\""
+    import_cmd+=" -trans-col=\"$trans_col\""
+    import_cmd+=" -context-col=\"$context_col\""
+    import_cmd+=" -topic-col=\"$topic_col\""
+    import_cmd+=" -diff-col=\"$diff_col\""
+    import_cmd+=" -pron-col=\"$pron_col\""
+    import_cmd+=" -examples-col=\"$examples_col\""
     
     # Run the import command
-    go run main.go -import -file="$file"
+    eval $import_cmd
     
     if [ $? -eq 0 ]; then
         print_success "Words successfully imported from $file."
@@ -133,6 +209,7 @@ function show_help() {
     print_message "  --topic-col <col>  - Колонка с темами (по умолчанию D)"
     print_message "  --diff-col <col>   - Колонка со сложностью (по умолчанию E)"
     print_message "  --pron-col <col>   - Колонка с произношением (по умолчанию F)"
+    print_message "  --examples-col <col> - Колонка с примерами использования (по умолчанию G)"
     print_message ""
     print_message "Примеры:"
     print_message "  $0                              - Запустить полную настройку и запуск"

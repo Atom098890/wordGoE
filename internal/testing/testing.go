@@ -114,14 +114,14 @@ func (t *TestingModule) CreateTest(userID int64, topicIDs []int64, questionCount
 			question.CorrectIndex = correctIndex
 			
 		case ContextTest:
-			// Use context or create one
+			// Generate context if it doesn't exist
 			context := word.Context
 			if context == "" {
-				context = "This is a sentence with the word " + word.EnglishWord + "."
+				context = "This is a sentence with the word " + word.Word + "."
 			}
 			
-			// Replace word with blank
-			blankContext := replaceWordWithBlank(context, word.EnglishWord)
+			// Create a blank sentence by replacing the word with underscores
+			blankContext := replaceWordWithBlank(context, word.Word)
 			question.ContextSentence = blankContext
 		}
 		

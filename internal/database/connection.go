@@ -69,8 +69,11 @@ func initializeSQLiteSchema() error {
 			last_name TEXT,
 			language_code TEXT,
 			is_premium BOOLEAN DEFAULT FALSE,
-			daily_words_limit INTEGER DEFAULT 5,
 			is_admin BOOLEAN DEFAULT FALSE,
+			preferred_topics TEXT, -- JSON array of topic IDs
+			notification_enabled BOOLEAN DEFAULT TRUE,
+			notification_hour INTEGER DEFAULT 8, -- Hour for daily notifications (0-23)
+			words_per_day INTEGER DEFAULT 5, -- Number of words per day
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)

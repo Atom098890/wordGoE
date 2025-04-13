@@ -13,35 +13,36 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ImportConfig holds configuration for the import process
+// ImportConfig defines configuration for import
 type ImportConfig struct {
 	FilePath           string
 	SheetName          string
 	WordColumn         string
 	TranslationColumn  string
-	ContextColumn      string
+	DescriptionColumn  string
 	TopicColumn        string
 	DifficultyColumn   string
 	HeaderRow          int
 	StartRow           int
 	// Optional
 	PronunciationColumn string
+	ExamplesColumn      string // Новое поле - примеры использования
 }
 
 // DefaultImportConfig returns a default configuration
 func DefaultImportConfig(filePath string) ImportConfig {
 	return ImportConfig{
-		FilePath:          filePath,
-		SheetName:         "Sheet1",
-		WordColumn:        "A",
-		TranslationColumn: "B",
-		ContextColumn:     "C",
-		TopicColumn:       "D",
-		DifficultyColumn:  "E",
-		HeaderRow:         1,
-		StartRow:          2,
-		// Optional
+		FilePath:            filePath,
+		SheetName:           "Sheet1",
+		WordColumn:          "A",
+		TranslationColumn:   "B",
+		DescriptionColumn:   "C",
+		TopicColumn:         "D",
+		DifficultyColumn:    "E",
 		PronunciationColumn: "F",
+		ExamplesColumn:      "G",
+		HeaderRow:           1,
+		StartRow:            2,
 	}
 }
 
@@ -49,8 +50,9 @@ func DefaultImportConfig(filePath string) ImportConfig {
 type ImportResult struct {
 	TotalProcessed  int
 	TopicsCreated   int
-	WordsCreated    int
-	WordsUpdated    int
+	Created         int
+	Updated         int
+	Skipped         int
 	Errors          []string
 }
 
@@ -207,7 +209,7 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
                 topicRepo *database.TopicRepository, wordRepo *database.WordRepository, 
                 result *ImportResult, rowNum int) error {
 	// Get cell values
-	var word, translation, context, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation, examples string
 	
 	// Check bounds for each column
 	if colIdx := columnToIndex(config.WordColumn); colIdx < len(row) {
@@ -216,8 +218,8 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 	if colIdx := columnToIndex(config.TranslationColumn); colIdx < len(row) {
 		translation = row[colIdx]
 	}
-	if colIdx := columnToIndex(config.ContextColumn); colIdx < len(row) {
-		context = row[colIdx]
+	if colIdx := columnToIndex(config.DescriptionColumn); colIdx < len(row) {
+		description = row[colIdx]
 	}
 	if colIdx := columnToIndex(config.TopicColumn); colIdx < len(row) {
 		topicName = row[colIdx]
@@ -230,8 +232,13 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 			pronunciation = row[colIdx]
 		}
 	}
+	if config.ExamplesColumn != "" {
+		if colIdx := columnToIndex(config.ExamplesColumn); colIdx < len(row) {
+			examples = row[colIdx]
+		}
+	}
 
-	return processWordData(word, translation, context, topicName, difficulty, pronunciation, 
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, examples, 
 	                     topicMap, topicRepo, wordRepo, result, rowNum)
 }
 
@@ -245,7 +252,7 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	}
 	
 	// Обрабатываем формат: Английское слово,[транскрипция],перевод
-	var word, translation, context, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation string
 	
 	// Используем переданную тему
 	topicName = currentTopic
@@ -267,13 +274,13 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	
 	// Установка контекста - добавляем транскрипцию как часть контекста
 	if pronunciation != "" {
-		context = "Произношение: " + pronunciation
+		description = "Произношение: " + pronunciation
 	}
 	
 	// Устанавливаем среднюю сложность по умолчанию
 	difficulty = "3"
 	
-	return processWordData(word, translation, context, topicName, difficulty, pronunciation, 
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, "", 
 	                     topicMap, topicRepo, wordRepo, result, rowNum)
 }
 
@@ -287,81 +294,107 @@ func cleanWord(word string) string {
 	return strings.TrimSpace(word)
 }
 
-// processWordData handles the common logic for processing word data from any source
-func processWordData(word, translation, context, topicName, difficulty, pronunciation string, 
-                    topicMap map[string]int64, topicRepo *database.TopicRepository, 
-                    wordRepo *database.WordRepository, result *ImportResult, _ int) error {
-	// Validate required fields
-	if word == "" || translation == "" || topicName == "" {
-		return fmt.Errorf("missing required fields")
-	}
-
-	// Get topic ID or create a new topic
-	var topicID int64
+// getOrCreateTopic gets a topic by name or creates a new one if it doesn't exist
+func getOrCreateTopic(topicName string, topicMap map[string]int64, topicRepo *database.TopicRepository) (int64, error) {
 	topicNameLower := strings.ToLower(strings.TrimSpace(topicName))
 	if id, exists := topicMap[topicNameLower]; exists {
-		topicID = id
-	} else {
-		newTopic := &models.Topic{
-			Name:        topicName,
-			Description: "", // Could be added as an additional column
-		}
-		if err := topicRepo.Create(newTopic); err != nil {
-			return fmt.Errorf("failed to create topic: %v", err)
-		}
-		topicID = newTopic.ID
-		topicMap[topicNameLower] = topicID
-		result.TopicsCreated++
+		return id, nil
 	}
+	
+	// Create new topic
+	newTopic := &models.Topic{
+		Name:        topicName,
+		Description: "",
+	}
+	
+	if err := topicRepo.Create(newTopic); err != nil {
+		return 0, fmt.Errorf("failed to create topic: %v", err)
+	}
+	
+	// Update map for future use
+	topicMap[topicNameLower] = newTopic.ID
+	return newTopic.ID, nil
+}
 
-	// Parse difficulty (default to 3 if not provided or invalid)
-	difficultyVal := 3
-	if difficulty != "" {
-		if val, err := parseIntInRange(difficulty, 1, 5); err == nil {
-			difficultyVal = val
+// processWordData handles the common logic for processing word data from any source
+func processWordData(word, translation, description, topicName, difficulty, pronunciation, examples string, 
+                     topicMap map[string]int64, topicRepo *database.TopicRepository, 
+                     wordRepo *database.WordRepository, result *ImportResult, rowNum int) error {
+	// Clean up word data
+	word = cleanWord(word)
+	translation = cleanWord(translation)
+	
+	if word == "" {
+		return fmt.Errorf("word cannot be empty")
+	}
+	
+	if translation == "" {
+		return fmt.Errorf("translation cannot be empty")
+	}
+	
+	// Parse difficulty (default to 3 if invalid)
+	difficultyVal := parseIntOrDefault(difficulty, 1, 5, 3)
+	
+	// Get or create topic
+	var topicID int64 = 0
+	if topicName != "" {
+		var err error
+		topicID, err = getOrCreateTopic(topicName, topicMap, topicRepo)
+		if err != nil {
+			return fmt.Errorf("failed to process topic: %w", err)
 		}
 	}
-
-	// Create or update the word
+	
+	// Check if word exists
 	existingWords, err := wordRepo.SearchWords(word)
 	if err != nil {
 		return fmt.Errorf("failed to search for existing words: %v", err)
 	}
 	
-	isUpdate := false
-	
+	// Find exact match with the same topic
+	var foundExact bool
 	for _, existingWord := range existingWords {
-		if strings.EqualFold(existingWord.EnglishWord, word) && existingWord.TopicID == topicID {
+		if strings.EqualFold(existingWord.Word, word) && existingWord.TopicID == topicID {
 			// Update existing word
 			existingWord.Translation = translation
-			existingWord.Context = context
+			existingWord.Context = description
 			existingWord.Difficulty = difficultyVal
 			existingWord.Pronunciation = pronunciation
+			existingWord.Examples = examples
 			
 			if err := wordRepo.Update(&existingWord); err != nil {
 				return fmt.Errorf("failed to update word: %v", err)
 			}
-			result.WordsUpdated++
-			isUpdate = true
+			result.Updated++
+			foundExact = true
 			break
 		}
 	}
 	
-	if !isUpdate {
+	if !foundExact {
+		// Check if exists with different topic
+		for _, existingWord := range existingWords {
+			if strings.EqualFold(existingWord.Word, word) && existingWord.TopicID != topicID {
+				result.Errors = append(result.Errors, fmt.Sprintf("Row %d: Word exists with different topic", rowNum))
+				return nil
+			}
+		}
+		
 		// Create new word
 		newWord := &models.Word{
-			EnglishWord:   word,
-			Translation:   translation,
-			Context:       context,
-			TopicID:       topicID,
-			Difficulty:    difficultyVal,
+			Word:         word,
+			Translation:  translation,
+			Context:      description,
+			TopicID:      topicID,
+			Difficulty:   difficultyVal,
 			Pronunciation: pronunciation,
+			Examples:     examples,
 		}
 		
 		if err := wordRepo.Create(newWord); err != nil {
 			return fmt.Errorf("failed to create word: %v", err)
 		}
-		result.WordsCreated++
+		result.Created++
 	}
 	
 	return nil
@@ -390,4 +423,22 @@ func parseIntInRange(s string, min, max int) (int, error) {
 		return max, nil
 	}
 	return val, nil
+}
+
+// Helper function to parse integer with default value
+func parseIntOrDefault(s string, min, max, defaultVal int) int {
+	if val, err := parseIntInRange(s, min, max); err == nil {
+		return val
+	}
+	return defaultVal
+}
+
+// WordData holds extracted word information from import
+type WordData struct {
+	Word          string
+	Translation   string
+	Description   string
+	Pronunciation string
+	Examples      string
+	Difficulty    int
 } 
