@@ -286,4 +286,77 @@ func (c *ChatGPT) GenerateTextWithWords(words []models.Word, count int) (string,
 	russianText := c.TranslateText(englishText)
 	
 	return englishText, russianText
+}
+
+// GenerateVerbConjugation generates examples of verb conjugation in three tenses: present, past, and future
+func (c *ChatGPT) GenerateVerbConjugation(word string) (string, error) {
+	// Only generate conjugations for verbs
+	prompt := fmt.Sprintf(
+		"If the word '%s' is a verb in English, provide its basic conjugation in three tenses WITHOUT PRONOUNS, just the verb forms. "+
+		"Format the output like this (use this exact format):\n\n"+
+		"Present: [verb in present tense]\n"+
+		"Past: [verb in past tense]\n"+
+		"Future: [verb in future tense without 'will']\n\n"+
+		"Example for the verb 'run':\n"+
+		"Present: run/runs\n"+
+		"Past: ran\n"+
+		"Future: will run\n\n"+
+		"If the word is not a verb, respond with 'Not a verb'.",
+		word,
+	)
+
+	messages := []Message{
+		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - предоставлять информацию о склонении глаголов в разных временах в краткой форме."},
+		{Role: "user", Content: prompt},
+	}
+
+	request := ChatRequest{
+		Model:       "gpt-3.5-turbo",
+		Messages:    messages,
+		MaxTokens:   150,
+		Temperature: 0.3, // Lower temperature for more accurate information
+	}
+
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var response ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	if response.Error != nil {
+		return "", fmt.Errorf("API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response choices returned")
+	}
+
+	conjugation := response.Choices[0].Message.Content
+	conjugation = strings.TrimSpace(conjugation)
+
+	// Check if the word is not a verb
+	if strings.Contains(conjugation, "Not a verb") {
+		return "", nil
+	}
+
+	return conjugation, nil
 } 

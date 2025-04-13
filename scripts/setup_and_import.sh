@@ -93,7 +93,6 @@ function import_words() {
     local topic_col="D"
     local diff_col="E"
     local pron_col="F"
-    local examples_col="G"
     
     # Parse additional options
     while [[ $# -gt 0 ]]; do
@@ -126,10 +125,6 @@ function import_words() {
                 pron_col="$2"
                 shift 2
                 ;;
-            --examples-col)
-                examples_col="$2"
-                shift 2
-                ;;
             *)
                 print_error "Unknown option: $1"
                 show_help
@@ -157,7 +152,6 @@ function import_words() {
     print_message "  - Topic column: $topic_col"
     print_message "  - Difficulty column: $diff_col"
     print_message "  - Pronunciation column: $pron_col"
-    print_message "  - Examples column: $examples_col"
     
     # Build import command with options
     local import_cmd="go run main.go -import -file=\"$file\""
@@ -170,7 +164,6 @@ function import_words() {
     import_cmd+=" -topic-col=\"$topic_col\""
     import_cmd+=" -diff-col=\"$diff_col\""
     import_cmd+=" -pron-col=\"$pron_col\""
-    import_cmd+=" -examples-col=\"$examples_col\""
     
     # Run the import command
     eval $import_cmd
@@ -209,7 +202,6 @@ function show_help() {
     print_message "  --topic-col <col>  - Колонка с темами (по умолчанию D)"
     print_message "  --diff-col <col>   - Колонка со сложностью (по умолчанию E)"
     print_message "  --pron-col <col>   - Колонка с произношением (по умолчанию F)"
-    print_message "  --examples-col <col> - Колонка с примерами использования (по умолчанию G)"
     print_message ""
     print_message "Примеры:"
     print_message "  $0                              - Запустить полную настройку и запуск"

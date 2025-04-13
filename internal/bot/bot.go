@@ -548,10 +548,17 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 	// Generate Example for Context if empty
 	var context string
 	var translation string
+	var conjugation string
 	
 	if b.chatGPT != nil {
 		// Try to generate a new example with ChatGPT
 		context = b.chatGPT.GenerateExampleWithFallback(&word)
+		
+		// Try to generate verb conjugation if it's a verb
+		verbConjugation, err := b.chatGPT.GenerateVerbConjugation(word.Word)
+		if err == nil && verbConjugation != "" {
+			conjugation = verbConjugation
+		}
 	}
 	
 	if context == "" {
@@ -581,6 +588,11 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 	wordCard += fmt.Sprintf("📝 *Пример:*\n%s\n\n", context)
 	wordCard += fmt.Sprintf("🔄 *Перевод:*\n%s\n\n", translation)
 	
+	// Add verb conjugation if available
+	if conjugation != "" {
+		wordCard += fmt.Sprintf("🔀 *Формы глагола:*\n%s\n\n", conjugation)
+	}
+	
 	wordCard += "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
 	wordCard += "Насколько хорошо вы знаете это слово?"
 	
@@ -590,12 +602,13 @@ func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
 	// Add quality rating buttons
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Не знаю", fmt.Sprintf("quality_%d_%d", word.ID, 0)),
-			tgbotapi.NewInlineKeyboardButtonData("⚠️ С трудом", fmt.Sprintf("quality_%d_%d", word.ID, 2)),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Не знаю", fmt.Sprintf("quality_%d_1", word.ID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Помню", fmt.Sprintf("quality_%d_%d", word.ID, 3)),
-			tgbotapi.NewInlineKeyboardButtonData("🌟 Хорошо знаю", fmt.Sprintf("quality_%d_%d", word.ID, 5)),
+			tgbotapi.NewInlineKeyboardButtonData("⚠️ Сомневаюсь", fmt.Sprintf("quality_%d_3", word.ID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Знаю", fmt.Sprintf("quality_%d_5", word.ID)),
 		),
 	)
 	msg.ReplyMarkup = keyboard
@@ -1060,7 +1073,7 @@ func formatImportReport(result *excel.ImportResult) string {
 	
 	// Показываем предупреждения, если они есть
 	if len(realErrors) > 0 {
-		reportText += "\n⚠️ Предупреждения при импорте:\n"
+		reportText += fmt.Sprintf("\n⚠️ Предупреждения при импорте:\n")
 		
 		// Показываем максимум 10 первых ошибок
 		errorsToShow := len(realErrors)

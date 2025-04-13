@@ -27,7 +27,6 @@ func main() {
 	topicCol := flag.String("topic-col", "D", "Column with topics")
 	diffCol := flag.String("diff-col", "E", "Column with difficulty ratings")
 	pronCol := flag.String("pron-col", "F", "Column with pronunciations")
-	examplesCol := flag.String("examples-col", "G", "Column with usage examples")
 	
 	flag.Parse()
 
@@ -55,11 +54,10 @@ func main() {
 			SheetName:           *sheetName,
 			WordColumn:          *wordCol,
 			TranslationColumn:   *transCol,
-			DescriptionColumn:   *contextCol,
+			ContextColumn:       *contextCol,
 			TopicColumn:         *topicCol,
 			DifficultyColumn:    *diffCol,
 			PronunciationColumn: *pronCol,
-			ExamplesColumn:      *examplesCol,
 			HeaderRow:           1,
 			StartRow:            2,
 		}
