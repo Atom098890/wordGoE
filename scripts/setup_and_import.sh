@@ -110,7 +110,16 @@ function import_words() {
 # Function to run the bot
 function run_bot() {
     print_message "Запускаю бота..."
-    go run main.go
+    
+    # Проверяем наличие main.go в разных местах
+    if [ -f "cmd/engbot/main.go" ]; then
+        go run cmd/engbot/main.go
+    elif [ -f "main.go" ]; then
+        go run main.go
+    else
+        print_error "Файл main.go не найден ни в корне проекта, ни в cmd/engbot!"
+        exit 1
+    fi
 }
 
 # Show help information
