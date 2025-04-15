@@ -326,16 +326,13 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 		columns[name] = true
 	}
 	
-	// Проверяем наличие обязательных колонок
-	requiredColumns := []string{"telegram_id", "username", "first_name", "last_name", "is_admin"}
-	for _, col := range requiredColumns {
-		if !columns[col] {
-			return nil, fmt.Errorf("required column '%s' not found in users table", col)
-		}
-	}
+	// Для отладки, посмотрим все колонки
+	log.Printf("Debug: available columns: %v", columns)
 	
 	// Строим запрос на основе существующих колонок
-	selectColumns := "telegram_id, username, first_name, last_name, is_admin"
+	// Важно: порядок колонок должен соответствовать порядку полей в структуре models.User
+	// ID соответствует telegram_id в БД
+	selectColumns := "telegram_id as id, username, first_name, last_name, is_admin"
 	
 	// Добавляем опциональные колонки, если они существуют
 	optionalColumns := map[string]string{
@@ -347,6 +344,7 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 		"updated_at":            "CURRENT_TIMESTAMP",
 	}
 	
+	// Важно сохранить правильный порядок колонок, соответствующий структуре User
 	for col, defaultValue := range optionalColumns {
 		if columns[col] {
 			selectColumns += ", " + col

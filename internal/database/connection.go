@@ -132,7 +132,7 @@ func initializeSQLiteSchema() error {
 			consecutive_right INTEGER DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
 			FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
 			UNIQUE(user_id, word_id)
 		)
@@ -150,7 +150,7 @@ func initializeSQLiteSchema() error {
 			score INTEGER NOT NULL,
 			max_score INTEGER NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
 			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL
 		)
 	`)
