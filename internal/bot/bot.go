@@ -117,8 +117,35 @@ func (b *Bot) Stop() {
 
 // SendReminders implements the scheduler.Notifier interface
 func (b *Bot) SendReminders(userID int64, count int) error {
-	msg := tgbotapi.NewMessage(userID, fmt.Sprintf("You have %d words due for review. Use /learn to start learning!", count))
-	_, err := b.api.Send(msg)
+	// Проверяем, существует ли пользователь
+	userRepo := database.NewUserRepository()
+	_, err := userRepo.GetByID(userID)
+	if err != nil {
+		log.Printf("Error getting user %d: %v", userID, err)
+		return err
+	}
+
+	// В Telegram обычно user ID и chat ID одинаковы для личных чатов,
+	// но лучше быть явным
+	chatID := userID
+
+	// Формируем сообщение с учетом количества слов
+	wordForm := "слов"
+	if count == 1 {
+		wordForm = "слово"
+	} else if count > 1 && count < 5 {
+		wordForm = "слова"
+	}
+
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("У вас %d %s для повторения! Используйте /learn чтобы начать обучение.", count, wordForm))
+	_, err = b.api.Send(msg)
+	
+	if err != nil {
+		log.Printf("Error sending reminder to user %d: %v", userID, err)
+	} else {
+		log.Printf("Successfully sent reminder to user %d for %d words", userID, count)
+	}
+	
 	return err
 }
 

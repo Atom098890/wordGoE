@@ -345,7 +345,18 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 	}
 	
 	// Важно сохранить правильный порядок колонок, соответствующий структуре User
-	for col, defaultValue := range optionalColumns {
+	// Добавляем колонки в правильном порядке, как определено в models.User
+	var orderedColumnsToAdd []string = []string{
+		"preferred_topics",
+		"notification_enabled",
+		"notification_hour",
+		"words_per_day",
+		"created_at",
+		"updated_at",
+	}
+	
+	for _, col := range orderedColumnsToAdd {
+		defaultValue := optionalColumns[col]
 		if columns[col] {
 			selectColumns += ", " + col
 		} else {
@@ -353,7 +364,22 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 		}
 	}
 	
-	query := "SELECT " + selectColumns + " FROM users WHERE " + condition
+	log.Printf("Debug: SelectColumns: %s", selectColumns)
+	
+	// Используем явный запрос с точным порядком полей как в структуре User
+	query := `SELECT 
+		telegram_id, 
+		username, 
+		first_name, 
+		last_name, 
+		is_admin, 
+		COALESCE(preferred_topics, '[]') as preferred_topics, 
+		COALESCE(notification_enabled, 1) as notification_enabled, 
+		COALESCE(notification_hour, 8) as notification_hour, 
+		COALESCE(words_per_day, 5) as words_per_day,
+		COALESCE(created_at, CURRENT_TIMESTAMP) as created_at,
+		COALESCE(updated_at, CURRENT_TIMESTAMP) as updated_at
+	FROM users WHERE ` + condition
 	
 	rows, err = DB.Query(query, args...)
 	if err != nil {
