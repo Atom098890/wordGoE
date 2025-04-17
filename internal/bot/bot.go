@@ -868,8 +868,8 @@ func (b *Bot) handleQualityResponse(userID int64, chatID int64, wordID int, qual
 			Repetitions:     0,
 			LastQuality:     quality,
 			ConsecutiveRight: 0,
-			LastReviewDate:  time.Now(),
-			NextReviewDate:  time.Now(), // Будет обновлено алгоритмом
+			LastReviewDate:  time.Now().Format(time.RFC3339),
+			NextReviewDate:  time.Now().Format(time.RFC3339), // Будет обновлено алгоритмом
 		}
 	}
 	
@@ -915,7 +915,14 @@ func (b *Bot) handleQualityResponse(userID int64, chatID int64, wordID int, qual
 	responseMsg += fmt.Sprintf("%s *%s* - _%s_\n\n", qualityEmoji, word.Word, word.Translation)
 	
 	// Добавляем информацию о прогрессе
-	nextDate := progress.NextReviewDate.Format("02.01.2006")
+	var nextDate string
+	// Если NextReviewDate уже в строковом формате, пробуем его распарсить и отформатировать
+	if reviewDate, err := time.Parse(time.RFC3339, progress.NextReviewDate); err == nil {
+		nextDate = reviewDate.Format("02.01.2006")
+	} else {
+		// Если не получилось распарсить, используем как есть
+		nextDate = progress.NextReviewDate
+	}
 	responseMsg += "*📊 Статистика изучения:*\n"
 	
 	if oldInterval > 0 {
@@ -1105,7 +1112,7 @@ func formatImportReport(result *excel.ImportResult) string {
 	
 	// Показываем предупреждения, если они есть
 	if len(realErrors) > 0 {
-		reportText += "\n⚠️ Предупреждения при импорте:\n"
+		reportText += fmt.Sprintf("\n⚠️ Предупреждения при импорте:\n")
 		
 		// Показываем максимум 10 первых ошибок
 		errorsToShow := len(realErrors)

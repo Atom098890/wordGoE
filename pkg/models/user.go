@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 // User represents a Telegram user using the bot
 type User struct {
 	ID                  int64     `json:"id" db:"telegram_id"` // Telegram User ID
@@ -13,6 +11,6 @@ type User struct {
 	NotificationEnabled bool      `json:"notification_enabled" db:"notification_enabled"`
 	NotificationHour    int       `json:"notification_hour" db:"notification_hour"` // Hour of day for notifications (0-23)
 	WordsPerDay         int       `json:"words_per_day" db:"words_per_day"`
-	CreatedAt           time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt           string    `json:"created_at" db:"created_at"`
+	UpdatedAt           string    `json:"updated_at" db:"updated_at"`
 } 

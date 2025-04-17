@@ -47,7 +47,8 @@ const (
 // Process implements the SM-2 algorithm to update user progress
 func (sm *SM2) Process(progress *models.UserProgress, quality QualityResponse) {
 	// Record the last review date
-	progress.LastReviewDate = time.Now()
+	now := time.Now()
+	progress.LastReviewDate = now.Format(time.RFC3339)
 	progress.LastQuality = int(quality)
 	
 	// Calculate the easiness factor (EF)
@@ -93,7 +94,8 @@ func (sm *SM2) Process(progress *models.UserProgress, quality QualityResponse) {
 	}
 	
 	// Set the next review date
-	progress.NextReviewDate = progress.LastReviewDate.AddDate(0, 0, progress.Interval)
+	nextDate := now.AddDate(0, 0, progress.Interval)
+	progress.NextReviewDate = nextDate.Format(time.RFC3339)
 }
 
 // GetNextWords returns the next n words due for review for a user
@@ -103,7 +105,9 @@ func (sm *SM2) GetNextWords(userProgress []models.UserProgress, limit int) []mod
 	var dueProgress []models.UserProgress
 	
 	for _, p := range userProgress {
-		if !p.NextReviewDate.After(now) {
+		// Парсим строку даты и сравниваем с текущим временем
+		nextReviewDate, err := time.Parse(time.RFC3339, p.NextReviewDate)
+		if err != nil || !nextReviewDate.After(now) {
 			dueProgress = append(dueProgress, p)
 		}
 	}

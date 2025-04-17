@@ -67,7 +67,7 @@ func (r *TestResultRepository) Delete(id int) error {
 }
 
 // GetUserStatsByPeriod returns test statistics for a user within a time period
-func (r *TestResultRepository) GetUserStatsByPeriod(userID int64, startDate, endDate time.Time) (map[string]interface{}, error) {
+func (r *TestResultRepository) GetUserStatsByPeriod(userID int64, startDate, endDate string) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 	
 	// Get total tests taken in period

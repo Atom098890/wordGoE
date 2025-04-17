@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 // Word represents an English word to be learned
 type Word struct {
 	ID           int       `json:"id" db:"id"`
@@ -12,6 +10,6 @@ type Word struct {
 	Difficulty   int       `json:"difficulty,omitempty" db:"difficulty"` // 1-5 scale of difficulty
 	Pronunciation string    `json:"pronunciation,omitempty" db:"pronunciation"` // Optional: URL to audio pronunciation
 	Examples     string    `json:"examples,omitempty" db:"examples"` // Optional: Examples of word usage
-	CreatedAt    time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
+	CreatedAt    string    `json:"created_at" db:"created_at"`
+	UpdatedAt    string    `json:"updated_at" db:"updated_at"`
 } 
