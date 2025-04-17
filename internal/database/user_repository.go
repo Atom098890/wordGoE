@@ -327,7 +327,7 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 	}
 	
 	// Для отладки, посмотрим все колонки
-	log.Printf("Debug: available columns: %v", columns)
+	// log.Printf("Debug: available columns: %v", columns)
 	
 	// Строим запрос на основе существующих колонок
 	// Важно: порядок колонок должен соответствовать порядку полей в структуре models.User
@@ -364,7 +364,7 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 		}
 	}
 	
-	log.Printf("Debug: SelectColumns: %s", selectColumns)
+	// log.Printf("Debug: SelectColumns: %s", selectColumns)
 	
 	// Используем явный запрос с точным порядком полей как в структуре User
 	query := `SELECT 
