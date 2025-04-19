@@ -12,8 +12,8 @@ import (
 
 // Константы для настроек уведомлений по умолчанию
 const (
-	DefaultNotificationStartHour = 8  // Время начала уведомлений (8:00)
-	DefaultNotificationEndHour   = 22 // Время окончания уведомлений (22:00)
+	DefaultNotificationStartHour = 4  // Время начала уведомлений (8:00)
+	DefaultNotificationEndHour   = 18 // Время окончания уведомлений (22:00)
 )
 
 // Scheduler manages scheduled tasks for the application

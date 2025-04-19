@@ -22,7 +22,7 @@ func NewSM2() *SM2 {
 	return &SM2{
 		MinEasinessFactor: 1.3,
 		MaxInterval:       365, // Max interval of 1 year
-		InitialIntervals:  []int{1, 3, 7, 10, 15, 30}, // 1, 3, 7, 10, 15, 30 дней для первых 6 повторений
+		InitialIntervals:  []int{0, 1, 2, 3, 7, 10, 15, 20, 30}, // 1, 3, 7, 10, 15, 30 дней для первых 6 повторений
 	}
 }
 
