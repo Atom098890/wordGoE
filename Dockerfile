@@ -15,8 +15,5 @@ RUN go build -o engbot
 # Создаем директорию для данных
 RUN mkdir -p /app/data
 
-# Устанавливаем права на запуск скриптов
-RUN chmod +x /app/scripts/*.sh
-
 # Запускаем бота
 CMD ["./engbot"] 
