@@ -36,11 +36,11 @@ const (
 
 // TestQuestion represents a single test question
 type TestQuestion struct {
-	Word           models.Word   // The word being tested
-	Options        []string      // Possible answers (for multiple choice)
-	CorrectIndex   int           // Index of correct answer in options
-	QuestionType   TestType      // Type of question
-	ContextSentence string       // Sentence with blank (for context tests)
+	Word              models.Word   // The word being tested
+	Options           []string      // Possible answers (for multiple choice)
+	CorrectIndex      int           // Index of correct answer in options
+	QuestionType      TestType      // Type of question
+	DescriptionSentence string       // Sentence with blank (for context tests)
 }
 
 // CreateTest generates a test with the specified parameters
@@ -122,7 +122,7 @@ func (t *TestingModule) CreateTest(userID int64, topicIDs []int64, questionCount
 			
 			// Create a blank sentence by replacing the word with underscores
 			blankContext := replaceWordWithBlank(context, word.Word)
-			question.ContextSentence = blankContext
+			question.DescriptionSentence = blankContext
 		}
 		
 		questions = append(questions, question)

@@ -1,8 +1,10 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/example/engbot/pkg/models"
 )
@@ -126,22 +128,64 @@ func CreateTopic(name string) (*models.Topic, error) {
 
 // GetAll returns all topics
 func (r *TopicRepository) GetAll() ([]models.Topic, error) {
-	var topics []models.Topic
+	var topics []struct {
+		ID          int64          `db:"id"`
+		Name        string         `db:"name"`
+		Description sql.NullString `db:"description"`
+		CreatedAt   time.Time      `db:"created_at"`
+		UpdatedAt   time.Time      `db:"updated_at"`
+	}
+	
 	err := DB.Select(&topics, "SELECT * FROM topics ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get topics: %v", err)
 	}
-	return topics, nil
+	
+	result := make([]models.Topic, len(topics))
+	for i, t := range topics {
+		result[i].ID = t.ID
+		result[i].Name = t.Name
+		if t.Description.Valid {
+			result[i].Description = t.Description.String
+		} else {
+			result[i].Description = ""
+		}
+		result[i].CreatedAt = t.CreatedAt.Format(time.RFC3339)
+		result[i].UpdatedAt = t.UpdatedAt.Format(time.RFC3339)
+	}
+	
+	return result, nil
 }
 
 // GetByID returns a topic by ID
 func (r *TopicRepository) GetByID(id int) (*models.Topic, error) {
-	var topic models.Topic
+	var topic struct {
+		ID          int64          `db:"id"`
+		Name        string         `db:"name"`
+		Description sql.NullString `db:"description"`
+		CreatedAt   time.Time      `db:"created_at"`
+		UpdatedAt   time.Time      `db:"updated_at"`
+	}
+	
 	err := DB.Get(&topic, "SELECT * FROM topics WHERE id = $1", id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get topic by ID: %v", err)
 	}
-	return &topic, nil
+	
+	result := &models.Topic{
+		ID:        topic.ID,
+		Name:      topic.Name,
+		CreatedAt: topic.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: topic.UpdatedAt.Format(time.RFC3339),
+	}
+	
+	if topic.Description.Valid {
+		result.Description = topic.Description.String
+	} else {
+		result.Description = ""
+	}
+	
+	return result, nil
 }
 
 // Create inserts a new topic
@@ -180,4 +224,23 @@ func (r *TopicRepository) Update(topic *models.Topic) error {
 func (r *TopicRepository) Delete(id int) error {
 	_, err := DB.Exec("DELETE FROM topics WHERE id = $1", id)
 	return err
+}
+
+// GetGeneralTopic returns the default "General" topic or creates it if it doesn't exist
+func (r *TopicRepository) GetGeneralTopic() (*models.Topic, error) {
+	var topic models.Topic
+	err := DB.Get(&topic, "SELECT * FROM topics WHERE name = 'General'")
+	if err != nil {
+		// Topic doesn't exist, create it
+		newTopic := &models.Topic{
+			Name:        "General",
+			Description: "Общие слова и выражения",
+		}
+		err = r.Create(newTopic)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create General topic: %v", err)
+		}
+		return newTopic, nil
+	}
+	return &topic, nil
 } 

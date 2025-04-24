@@ -12,6 +12,7 @@ type UserProgress struct {
 	Repetitions     int       `json:"repetitions" db:"repetitions"`           // Number of repetitions
 	LastQuality     int       `json:"last_quality" db:"last_quality"`         // 0-5 rating of last recall
 	ConsecutiveRight int      `json:"consecutive_right" db:"consecutive_right"` // Number of consecutive correct recalls
+	IsLearned       bool      `json:"is_learned" db:"is_learned"`             // Whether the word is considered learned
 	CreatedAt       string    `json:"created_at" db:"created_at"`
 	UpdatedAt       string    `json:"updated_at" db:"updated_at"`
 } 

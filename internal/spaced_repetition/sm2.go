@@ -1,28 +1,28 @@
 package spaced_repetition
 
 import (
+	"sort"
 	"time"
 
 	"github.com/example/engbot/pkg/models"
 )
 
-// SM2 implements the SuperMemo 2 algorithm for spaced repetition
-// This is a modified version of the original algorithm
+// SM2 implements the SuperMemo-2 algorithm for spaced repetition
 type SM2 struct {
-	// MinEasinessFactor is the minimum value for the easiness factor
-	MinEasinessFactor float64
-	// MaxInterval is the maximum interval between repetitions (in days)
+	// Пороговое значение "хорошего ответа"
+	PassThreshold int
+	// Максимальный интервал повторения в днях
 	MaxInterval int
-	// Initial interval values for each repetition
+	// Начальные интервалы повторения в днях
 	InitialIntervals []int
 }
 
-// NewSM2 creates a new SM2 algorithm instance with default parameters
+// NewSM2 создает новый экземпляр SM2 с настройками по умолчанию
 func NewSM2() *SM2 {
 	return &SM2{
-		MinEasinessFactor: 1.3,
-		MaxInterval:       365, // Max interval of 1 year
-		InitialIntervals:  []int{0, 1, 2, 3, 7, 10, 15, 20, 30}, // 1, 3, 7, 10, 15, 30 дней для первых 6 повторений
+		PassThreshold:    3, // Ответы 3 и выше считаются успешными
+		MaxInterval:      365, // Максимальный интервал - 1 год
+		InitialIntervals: []int{0, 1, 2, 3, 7, 10, 15, 20, 30}, // Предустановленные интервалы для первых повторений
 	}
 }
 
@@ -55,8 +55,8 @@ func (sm *SM2) Process(progress *models.UserProgress, quality QualityResponse) {
 	newEF := progress.EasinessFactor + (0.1 - (5.0-float64(quality))*(0.08+(5.0-float64(quality))*0.02))
 	
 	// Ensure minimum easiness factor
-	if newEF < sm.MinEasinessFactor {
-		newEF = sm.MinEasinessFactor
+	if newEF < 1.3 {
+		newEF = 1.3 // Не опускаем ниже 1.3
 	}
 	progress.EasinessFactor = newEF
 	
@@ -105,20 +105,59 @@ func (sm *SM2) GetNextWords(userProgress []models.UserProgress, limit int) []mod
 	var dueProgress []models.UserProgress
 	
 	for _, p := range userProgress {
-		// Парсим строку даты и сравниваем с текущим временем
+		// Parse the date and compare with current time
 		nextReviewDate, err := time.Parse(time.RFC3339, p.NextReviewDate)
 		if err != nil || !nextReviewDate.After(now) {
 			dueProgress = append(dueProgress, p)
 		}
 	}
 	
-	// Sort them by priority:
-	// 1. Words that have never been reviewed
+	// Sort due items by priority:
+	// 1. Words that have never been reviewed (repetitions = 0)
 	// 2. Words with lowest easiness factor (hardest words)
 	// 3. Words with earliest next review date
 	
-	// Simple implementation that just takes the first n items
-	// In a real implementation, you would want to sort them properly
+	// Sort by priority criteria
+	sort.Slice(dueProgress, func(i, j int) bool {
+		// First priority: words that have never been reviewed
+		if dueProgress[i].Repetitions == 0 && dueProgress[j].Repetitions > 0 {
+			return true
+		}
+		if dueProgress[j].Repetitions == 0 && dueProgress[i].Repetitions > 0 {
+			return false
+		}
+		
+		// Second priority: words with lower easiness factor (harder words)
+		if dueProgress[i].EasinessFactor < dueProgress[j].EasinessFactor {
+			return true
+		}
+		if dueProgress[i].EasinessFactor > dueProgress[j].EasinessFactor {
+			return false
+		}
+		
+		// Third priority: words that are more overdue
+		// Parse dates first
+		nextReviewDateI, errI := time.Parse(time.RFC3339, dueProgress[i].NextReviewDate)
+		nextReviewDateJ, errJ := time.Parse(time.RFC3339, dueProgress[j].NextReviewDate)
+		
+		// If both dates are valid, compare them
+		if errI == nil && errJ == nil {
+			return nextReviewDateI.Before(nextReviewDateJ)
+		}
+		
+		// If one date is invalid, prioritize valid dates
+		if errI != nil {
+			return false
+		}
+		if errJ != nil {
+			return true
+		}
+		
+		// Default: maintain original order
+		return i < j
+	})
+	
+	// Return limited number of items
 	if len(dueProgress) > limit {
 		return dueProgress[:limit]
 	}
@@ -135,4 +174,64 @@ func (sm *SM2) IsWordMastered(progress *models.UserProgress) bool {
 	return progress.Repetitions >= 5 && 
 		   progress.LastQuality >= int(QualityCorrectHesitation) && 
 		   progress.Interval >= 30
+}
+
+// ComputeNextInterval вычисляет следующий интервал повторения на основе ответа
+// quality - качество ответа (от 0 до 5)
+// repetitions - текущее количество повторений
+// currentEF - текущий фактор легкости
+// currentInterval - текущий интервал в днях
+func (sm2 *SM2) ComputeNextInterval(quality, repetitions int, currentEF float64, currentInterval int) (int, float64, int) {
+	// Обновляем фактор легкости
+	newEF := currentEF + (0.1 - float64(5-quality)*(0.08+float64(5-quality)*0.02))
+	if newEF < 1.3 {
+		newEF = 1.3 // Не опускаем ниже 1.3
+	}
+	
+	var newInterval int
+	var newRepetitions int
+	
+	if quality >= sm2.PassThreshold {
+		// Ответ был правильным
+		newRepetitions = repetitions + 1
+		
+		if newRepetitions < len(sm2.InitialIntervals) {
+			// Используем предустановленные интервалы для начальных повторений
+			newInterval = sm2.InitialIntervals[newRepetitions]
+		} else {
+			// Для последующих повторений используем формулу
+			newInterval = int(float64(currentInterval) * newEF)
+			if newInterval > sm2.MaxInterval {
+				newInterval = sm2.MaxInterval
+			}
+		}
+	} else {
+		// Ответ был неправильным - сбрасываем прогресс
+		newRepetitions = 0
+		newInterval = 1 // Повторение на следующий день
+	}
+	
+	return newInterval, newEF, newRepetitions
+}
+
+// CalculateQuality определяет качество ответа на основе затраченного времени и точности
+// Это просто пример реализации. В реальности вы можете использовать любую логику.
+// accuracy - точность ответа (0.0 - 1.0)
+// timeSpent - время ответа в секундах
+func (sm2 *SM2) CalculateQuality(accuracy float64, timeSpent float64) int {
+	if accuracy == 0 {
+		return 0 // Полностью неверный ответ
+	}
+	
+	// Базовое качество на основе точности
+	baseQuality := int(accuracy * 5)
+	
+	// Корректировка на основе времени
+	// Тут можно реализовать свою логику
+	
+	if baseQuality > 5 {
+		baseQuality = 5
+	}
+	
+	return baseQuality
 } 

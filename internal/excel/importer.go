@@ -207,7 +207,7 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
                 topicRepo *database.TopicRepository, wordRepo *database.WordRepository, 
                 result *ImportResult) error {
 	// Get cell values
-	var word, translation, description, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation, examples string
 	
 	// Check bounds for each column
 	if colIdx := columnToIndex(config.WordColumn); colIdx < len(row) {
@@ -230,8 +230,13 @@ func processRow(row []string, config ImportConfig, topicMap map[string]int64,
 			pronunciation = row[colIdx]
 		}
 	}
+	if config.ExamplesColumn != "" {
+		if colIdx := columnToIndex(config.ExamplesColumn); colIdx < len(row) {
+			examples = row[colIdx]
+		}
+	}
 
-	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, examples, 
 	                     topicMap, topicRepo, wordRepo, result)
 }
 
@@ -245,7 +250,7 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	}
 	
 	// Обрабатываем формат: Английское слово,[транскрипция],перевод
-	var word, translation, description, topicName, difficulty, pronunciation string
+	var word, translation, description, topicName, difficulty, pronunciation, examples string
 	
 	// Используем переданную тему
 	topicName = currentTopic
@@ -273,7 +278,11 @@ func processCSVRow(row []string, topicMap map[string]int64,
 	// Устанавливаем среднюю сложность по умолчанию
 	difficulty = "3"
 	
-	return processWordData(word, translation, description, topicName, difficulty, pronunciation, 
+	if len(row) > 3 {
+		examples = row[3]
+	}
+	
+	return processWordData(word, translation, description, topicName, difficulty, pronunciation, examples, 
 	                     topicMap, topicRepo, wordRepo, result)
 }
 
@@ -310,7 +319,7 @@ func getOrCreateTopic(topicName string, topicMap map[string]int64, topicRepo *da
 }
 
 // processWordData handles the common logic for processing word data from any source
-func processWordData(word, translation, description, topicName, difficulty, pronunciation string, 
+func processWordData(word, translation, description, topicName, difficulty, pronunciation, examples string, 
                      topicMap map[string]int64, topicRepo *database.TopicRepository, 
                      wordRepo *database.WordRepository, result *ImportResult) error {
 	// Clean up word data
@@ -353,6 +362,7 @@ func processWordData(word, translation, description, topicName, difficulty, pron
 			existingWord.Description = description
 			existingWord.Difficulty = difficultyVal
 			existingWord.Pronunciation = pronunciation
+			existingWord.Examples = examples
 			
 			if err := wordRepo.Update(&existingWord); err != nil {
 				return fmt.Errorf("failed to update word: %v", err)
@@ -375,6 +385,7 @@ func processWordData(word, translation, description, topicName, difficulty, pron
 			TopicID:      topicID,
 			Difficulty:   difficultyVal,
 			Pronunciation: pronunciation,
+			Examples:     examples,
 		}
 		
 		if err := wordRepo.Create(newWord); err != nil {

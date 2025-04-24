@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/example/engbot/pkg/models"
@@ -17,24 +18,59 @@ func NewWordRepository() *WordRepository {
 // GetAll returns all words
 func (r *WordRepository) GetAll() ([]models.Word, error) {
 	var words []models.Word
+	var description, pronunciation, examples, verbForms sql.NullString
+	
 	query := `
 		SELECT 
 			id, 
 			word, 
 			translation, 
+			description,
 			topic_id, 
 			difficulty, 
-			pronunciation, 
+			pronunciation,
+			examples,
+			verb_forms,
 			created_at, 
 			updated_at 
 		FROM words 
-		ORDER BY word
+		ORDER BY id ASC
 	`
 	
-	err := DB.Select(&words, query)
+	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get words: %v", err)
 	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var word models.Word
+		err := rows.Scan(
+			&word.ID,
+			&word.Word,
+			&word.Translation,
+			&description,
+			&word.TopicID,
+			&word.Difficulty,
+			&pronunciation,
+			&examples,
+			&verbForms,
+			&word.CreatedAt,
+			&word.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan word: %v", err)
+		}
+		
+		// Convert NULL values to empty strings
+		word.Description = description.String
+		word.Pronunciation = pronunciation.String
+		word.Examples = examples.String
+		word.VerbForms = verbForms.String
+		
+		words = append(words, word)
+	}
+	
 	return words, nil
 }
 
@@ -46,9 +82,12 @@ func (r *WordRepository) GetByID(id int) (*models.Word, error) {
 			id, 
 			word, 
 			translation, 
+			description,
 			topic_id, 
 			difficulty, 
-			pronunciation, 
+			pronunciation,
+			examples,
+			verb_forms,
 			created_at, 
 			updated_at 
 		FROM words 
@@ -70,9 +109,12 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 			id, 
 			word, 
 			translation, 
+			description,
 			topic_id, 
 			difficulty, 
-			pronunciation, 
+			pronunciation,
+			examples,
+			verb_forms,
 			created_at, 
 			updated_at 
 		FROM words 
@@ -90,16 +132,19 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 // Create inserts a new word
 func (r *WordRepository) Create(word *models.Word) error {
 	query := `
-		INSERT INTO words (word, translation, topic_id, difficulty, pronunciation, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO words (word, translation, description, topic_id, difficulty, pronunciation, examples, verb_forms, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 	result, err := DB.Exec(
 		query,
 		word.Word,
 		word.Translation,
+		word.Description,
 		word.TopicID,
 		word.Difficulty,
 		word.Pronunciation,
+		word.Examples,
+		word.VerbForms,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create word: %v", err)
@@ -128,9 +173,12 @@ func (r *WordRepository) Update(word *models.Word) error {
 		UPDATE words SET 
 			word = ?,
 			translation = ?,
+			description = ?,
 			topic_id = ?,
 			difficulty = ?,
 			pronunciation = ?,
+			examples = ?,
+			verb_forms = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
@@ -138,9 +186,12 @@ func (r *WordRepository) Update(word *models.Word) error {
 		query,
 		word.Word,
 		word.Translation,
+		word.Description,
 		word.TopicID,
 		word.Difficulty,
 		word.Pronunciation,
+		word.Examples,
+		word.VerbForms,
 		word.ID,
 	)
 	if err != nil {
@@ -177,9 +228,11 @@ func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 			id, 
 			word, 
 			translation, 
+			description,
 			topic_id, 
 			difficulty, 
-			pronunciation, 
+			pronunciation,
+			examples,
 			created_at, 
 			updated_at 
 		FROM words 
@@ -247,4 +300,20 @@ func GetWordByID(wordID int) (*models.Word, error) {
 	}
 	
 	return word, nil
+}
+
+// CreateWithDefaultTopic creates a new word with the default "General" topic
+func (r *WordRepository) CreateWithDefaultTopic(word *models.Word) error {
+	// Get or create the General topic
+	topicRepo := NewTopicRepository()
+	generalTopic, err := topicRepo.GetGeneralTopic()
+	if err != nil {
+		return fmt.Errorf("failed to get General topic: %v", err)
+	}
+	
+	// Set the topic ID
+	word.TopicID = generalTopic.ID
+	
+	// Create the word
+	return r.Create(word)
 } 

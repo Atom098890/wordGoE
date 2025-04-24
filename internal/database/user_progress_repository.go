@@ -30,7 +30,7 @@ func (r *UserProgressRepository) GetDueWordsForUser(userID int64) ([]models.User
 	
 	query := `
 		SELECT * FROM user_progress
-		WHERE user_id = $1 AND next_review_date <= datetime('now')
+		WHERE user_id = $1 AND next_review_date <= datetime('now') AND is_learned = FALSE
 		ORDER BY next_review_date ASC
 	`
 	
@@ -46,9 +46,9 @@ func (r *UserProgressRepository) Create(progress *models.UserProgress) error {
 	query := `
 		INSERT INTO user_progress (
 			user_id, word_id, last_review_date, next_review_date, 
-			interval, easiness_factor, repetitions, last_quality, consecutive_right,
+			interval, easiness_factor, repetitions, last_quality, consecutive_right, is_learned,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 	
 	result, err := DB.Exec(
@@ -62,6 +62,7 @@ func (r *UserProgressRepository) Create(progress *models.UserProgress) error {
 		progress.Repetitions,
 		progress.LastQuality,
 		progress.ConsecutiveRight,
+		progress.IsLearned,
 	)
 	
 	if err != nil {
@@ -91,8 +92,9 @@ func (r *UserProgressRepository) Update(progress *models.UserProgress) error {
 			repetitions = $5,
 			last_quality = $6,
 			consecutive_right = $7,
+			is_learned = $8,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = $8
+		WHERE id = $9
 	`
 	
 	_, err := DB.Exec(
@@ -104,6 +106,7 @@ func (r *UserProgressRepository) Update(progress *models.UserProgress) error {
 		progress.Repetitions,
 		progress.LastQuality,
 		progress.ConsecutiveRight,
+		progress.IsLearned,
 		progress.ID,
 	)
 	
@@ -240,4 +243,23 @@ func (r *UserProgressRepository) GetTopicCompletionStats(userID int64, topicID i
 	stats["topic_name"] = topicName
 	
 	return stats, nil
+}
+
+// GetLearnedWords returns all words marked as learned for a specific user
+func (r *UserProgressRepository) GetLearnedWords(userID int64) ([]models.Word, error) {
+	var words []models.Word
+	
+	query := `
+		SELECT w.*
+		FROM words w
+		JOIN user_progress up ON w.id = up.word_id
+		WHERE up.user_id = $1 AND up.is_learned = TRUE
+		ORDER BY w.word
+	`
+	
+	err := DB.Select(&words, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get learned words: %v", err)
+	}
+	return words, nil
 } 

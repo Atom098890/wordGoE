@@ -1,118 +1,257 @@
 package bot
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/example/engbot/internal/ai"
 	"github.com/example/engbot/internal/database"
-	"github.com/example/engbot/internal/excel"
 	"github.com/example/engbot/internal/scheduler"
 	"github.com/example/engbot/internal/spaced_repetition"
-	"github.com/example/engbot/internal/testing"
 	"github.com/example/engbot/pkg/models"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Bot represents the Telegram bot
-type Bot struct {
-	api          *tgbotapi.BotAPI
-	scheduler    *scheduler.Scheduler
-	adminUserIDs map[int64]bool
-	chatGPT      *ai.ChatGPT
-	sm2          *spaced_repetition.SM2
-	awaitingFileUpload map[int64]bool
-	learningSessions map[int64]learningSession
+// Repository represents the interface for accessing data for the bot
+type repository interface {
+	GetTopicByName(ctx context.Context, name string) (models.Topic, error)
+	CreateTopic(ctx context.Context, name string) (int64, error)
+	GetWordByWordAndTopicID(ctx context.Context, word string, topicID int64) (models.Word, error)
+	CreateWord(ctx context.Context, word models.Word) (int64, error)
+	UpdateWord(ctx context.Context, word models.Word) error
 }
 
-// Struct for storing learning session data
+// learningSession represents a user's ongoing session for learning words
 type learningSession struct {
-	Words      []models.Word // Words for this session
-	CurrentIdx int           // Index of the current word
+	Words           []models.Word
+	CurrentIdx      int
+	WordsPerGroup   int
+}
+
+// UserState represents the current state of a user in conversation with the bot
+type UserState struct {
+	State     string
+	Timestamp time.Time
+	Data      map[string]interface{}
+}
+
+// Bot represents the Telegram bot application
+type Bot struct {
+	api               *tgbotapi.BotAPI
+	token             string
+	db                interface{}
+	repo              repository
+	openAiEnabled     bool
+	schedulerEnabled  bool
+	scheduler         *scheduler.Scheduler
+	userStates        map[int64]UserState
+	learningSessions  map[int64]learningSession
+	adminUserIDs      map[int64]bool
+	awaitingFileUpload map[int64]bool
+	chatGPT           *ai.ChatGPT
 }
 
 // New creates a new bot instance
 func New() (*Bot, error) {
+	// Получаем токен из переменной окружения
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN environment variable is not set")
 	}
-
-	// Create bot API instance
-	api, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bot: %v", err)
+	
+	// Используем существующее подключение к базе данных
+	// Предполагаем, что database.DB доступна извне
+	if database.DB == nil {
+		return nil, fmt.Errorf("database connection is not established")
 	}
-
-	// Parse admin user IDs from environment variable
-	adminUserIDs := make(map[int64]bool)
-	adminIDs := os.Getenv("ADMIN_USER_IDS")
-	if adminIDs != "" {
-		ids := strings.Split(adminIDs, ",")
-		for _, id := range ids {
-			if userID, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err == nil {
-				adminUserIDs[userID] = true
-			}
+	
+	// Проверяем, включен ли OpenAI
+	openAiEnabled := os.Getenv("OPENAI_API_KEY") != ""
+	var chatGPT *ai.ChatGPT
+	
+	if openAiEnabled {
+		var err error
+		chatGPT, err = ai.New()
+		if err != nil {
+			log.Printf("Warning: Unable to initialize OpenAI client: %v", err)
+			openAiEnabled = false
 		}
 	}
-
-	// Create ChatGPT client
-	chatGPT, err := ai.New()
-	if err != nil {
-		log.Printf("Warning: ChatGPT client initialization failed: %v. Will use fallback examples.", err)
-		// Continue without ChatGPT - we'll use fallbacks
-	}
-
+	
+	// Проверяем, должен ли быть включен планировщик
+	schedulerEnabled := os.Getenv("ENABLE_SCHEDULER") != "false"
+	
+	// Создаем репозиторий
+	repo := &defaultRepository{}
+	
+	// Создаем экземпляр бота
 	bot := &Bot{
-		api:          api,
-		adminUserIDs: adminUserIDs,
-		chatGPT:      chatGPT,
-		sm2:          spaced_repetition.NewSM2(),
+		token:             token,
+		db:                database.DB,
+		repo:              repo,
+		openAiEnabled:     openAiEnabled,
+		schedulerEnabled:  schedulerEnabled,
+		userStates:        make(map[int64]UserState),
+		learningSessions:  make(map[int64]learningSession),
+		adminUserIDs:      make(map[int64]bool),
 		awaitingFileUpload: make(map[int64]bool),
-		learningSessions: make(map[int64]learningSession),
+		chatGPT:           chatGPT,
 	}
-
-	// Create scheduler with bot as notifier
-	bot.scheduler = scheduler.New(bot)
-
+	
+	// Загрузка ID администраторов из переменной окружения
+	adminIDs := os.Getenv("ADMIN_USER_IDS")
+	if adminIDs != "" {
+		for _, idStr := range strings.Split(adminIDs, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+			if err != nil {
+				log.Printf("Warning: Invalid admin user ID: %s", idStr)
+				continue
+			}
+			bot.adminUserIDs[id] = true
+		}
+	}
+	
 	return bot, nil
 }
 
-// Start begins listening for updates from Telegram
+// defaultRepository - простая реализация репозитория по умолчанию
+type defaultRepository struct {}
+
+func (r *defaultRepository) GetTopicByName(ctx context.Context, name string) (models.Topic, error) {
+	var topic models.Topic
+	err := database.DB.QueryRowContext(ctx, "SELECT id, name FROM topics WHERE name = ?", name).
+		Scan(&topic.ID, &topic.Name)
+	return topic, err
+}
+
+func (r *defaultRepository) CreateTopic(ctx context.Context, name string) (int64, error) {
+	result, err := database.DB.ExecContext(ctx, "INSERT INTO topics (name) VALUES (?)", name)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (r *defaultRepository) GetWordByWordAndTopicID(ctx context.Context, word string, topicID int64) (models.Word, error) {
+	var w models.Word
+	var description, examples, pronunciation sql.NullString
+	
+	query := `SELECT id, word, translation, description, examples, topic_id, difficulty, pronunciation, 
+			 created_at, updated_at FROM words WHERE word = ? AND topic_id = ?`
+	err := database.DB.QueryRowContext(ctx, query, word, topicID).
+		Scan(&w.ID, &w.Word, &w.Translation, &description, &examples, 
+			&w.TopicID, &w.Difficulty, &pronunciation, &w.CreatedAt, &w.UpdatedAt)
+	
+	if err == nil {
+		// Преобразуем NULL значения в пустые строки
+		if description.Valid {
+			w.Description = description.String
+		} else {
+			w.Description = ""
+		}
+		
+		if examples.Valid {
+			w.Examples = examples.String
+		} else {
+			w.Examples = ""
+		}
+		
+		if pronunciation.Valid {
+			w.Pronunciation = pronunciation.String
+		} else {
+			w.Pronunciation = ""
+		}
+	}
+	
+	return w, err
+}
+
+func (r *defaultRepository) CreateWord(ctx context.Context, word models.Word) (int64, error) {
+	query := `INSERT INTO words (word, translation, description, examples, topic_id, difficulty, pronunciation) 
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`
+	result, err := database.DB.ExecContext(ctx, query, word.Word, word.Translation, word.Description, 
+								   word.Examples, word.TopicID, word.Difficulty, word.Pronunciation)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (r *defaultRepository) UpdateWord(ctx context.Context, word models.Word) error {
+	query := `UPDATE words SET translation = ?, description = ?, examples = ?, 
+			 difficulty = ?, pronunciation = ?, updated_at = CURRENT_TIMESTAMP 
+			 WHERE id = ?`
+	_, err := database.DB.ExecContext(ctx, query, word.Translation, word.Description, 
+							  word.Examples, word.Difficulty, word.Pronunciation, word.ID)
+	return err
+}
+
+// Start initializes and starts the bot
 func (b *Bot) Start() error {
-	// Set update configuration
+	// Initialize the bot with the given token
+	botAPI, err := tgbotapi.NewBotAPI(b.token)
+	if err != nil {
+		return fmt.Errorf("unable to create bot: %v", err)
+	}
+	
+	b.api = botAPI
+	log.Printf("Authorized on account %s", botAPI.Self.UserName)
+	
+	// Set up the update configuration
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
-
+	
 	// Get updates channel
 	updates := b.api.GetUpdatesChan(updateConfig)
-
-	// Start the scheduler
-	b.scheduler.Start()
-	log.Println("Bot scheduler started")
-
-	// Process updates
-	log.Printf("Bot started as @%s", b.api.Self.UserName)
+	
+	// Start goroutine to handle scheduled reminders
+	if b.schedulerEnabled {
+		go b.scheduleReminders()
+	}
+	
+	// Wait for termination signal in a separate goroutine
+	go b.waitForTermination()
+	
+	// Handle incoming updates
 	for update := range updates {
 		go b.handleUpdate(update)
 	}
-
+	
 	return nil
 }
 
 // Stop gracefully stops the bot
 func (b *Bot) Stop() {
 	// Stop the scheduler
-	b.scheduler.Stop()
-	log.Println("Bot scheduler stopped")
+	if b.schedulerEnabled && b.scheduler != nil {
+		b.scheduler.Stop()
+	}
+	log.Println("Bot stopped")
+}
+
+// scheduleReminders sets up scheduled reminder jobs
+func (b *Bot) scheduleReminders() {
+	log.Println("Starting reminder scheduler...")
+	
+	// Создаем планировщик с текущим ботом в качестве Notifier
+	b.scheduler = scheduler.New(b)
+	
+	// Запускаем планировщик
+	b.scheduler.Start()
+	
+	log.Println("Reminder scheduler started successfully")
+}
+
+// waitForTermination waits for termination signal and gracefully stops the bot
+func (b *Bot) waitForTermination() {
+	// Implement signal handling for graceful shutdown
+	log.Println("Press Ctrl+C to stop the bot")
 }
 
 // SendReminders implements the scheduler.Notifier interface
@@ -156,241 +295,134 @@ func (b *Bot) isAdmin(userID int64) bool {
 
 // handleUpdate processes a single update from Telegram
 func (b *Bot) handleUpdate(update tgbotapi.Update) {
-	// Handle different types of updates
+	// Handle all update types directly here
 	if update.Message != nil {
-		b.handleMessage(update.Message)
-	} else if update.CallbackQuery != nil {
-		b.handleCallbackQuery(update.CallbackQuery)
-	}
-
-	// Handle document (file) uploads for import
-	if update.Message != nil && update.Message.Document != nil && b.awaitingFileUpload[update.Message.From.ID] {
-		// Проверяем, является ли пользователь администратором
-		isAdmin := b.isAdmin(update.Message.From.ID)
-		if !isAdmin {
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⛔ У вас нет прав для выполнения этой команды.")
-			b.api.Send(msg)
+		userID := update.Message.From.ID
+		
+		// Register user if needed
+		b.registerUserIfNeeded(userID, update.Message.From.UserName, update.Message.From.FirstName, update.Message.From.LastName)
+		
+		// Check if the user is in a specific state and not sending a command
+		if state, exists := b.userStates[userID]; exists && !strings.HasPrefix(update.Message.Text, "/") {
+			switch state.State {
+			case "waiting_for_word_list":
+				b.processWordList(update.Message)
+				return
+			}
+		}
+		
+		// Handle commands
+		if update.Message.IsCommand() {
+			switch update.Message.Command() {
+			case "start":
+				b.handleStartCommand(update.Message)
+			case "help":
+				b.handleHelpCommand(update.Message)
+			case "add":
+				b.handleAddWordsCommand(update.Message)
+			case "learn":
+				b.handleLearnCommand(update.Message)
+			case "stats":
+				b.handleStatsCommand(update.Message)
+			case "settings":
+				b.handleSettingsCommand(update.Message)
+			case "import":
+				// Admin-only command
+				if b.isAdmin(userID) {
+					b.handleImportCommand(update.Message)
+				} else {
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, "This command is only available for administrators.")
+					b.api.Send(msg)
+				}
+			case "admin_stats":
+				// Admin-only command
+				if b.isAdmin(userID) {
+					b.handleAdminStatsCommand(update.Message)
+				} else {
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, "This command is only available for administrators.")
+					b.api.Send(msg)
+				}
+			default:
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Unknown command. Use /help to see available commands.")
+				b.api.Send(msg)
+			}
 			return
 		}
 		
-		document := update.Message.Document
-		fileExt := strings.ToLower(filepath.Ext(document.FileName))
-		
-		// Проверяем, что файл имеет поддерживаемый формат
-		if fileExt != ".xlsx" && fileExt != ".csv" {
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Файл должен быть в формате .xlsx или .csv")
-			b.api.Send(msg)
-			return
-		}
-		
-		// Отправляем сообщение о начале загрузки
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "⏳ Загружаю файл... Пожалуйста, подождите.")
-		statusMsg, _ := b.api.Send(msg)
-		
-		// Получаем файл
-		fileURL, err := b.api.GetFileDirectURL(document.FileID)
-		if err != nil {
-			b.api.Send(tgbotapi.NewEditMessageText(update.Message.Chat.ID, statusMsg.MessageID, "❌ Ошибка при получении файла: "+err.Error()))
-			return
-		}
-		
-		// Загружаем файл
-		tempDir, err := ioutil.TempDir("", "engbot_import_")
-		if err != nil {
-			b.api.Send(tgbotapi.NewEditMessageText(update.Message.Chat.ID, statusMsg.MessageID, "❌ Ошибка при создании временной директории: "+err.Error()))
-			return
-		}
-		defer os.RemoveAll(tempDir)
-		
-		tempFilePath := filepath.Join(tempDir, document.FileName)
-		err = b.downloadFile(fileURL, tempFilePath)
-		if err != nil {
-			b.api.Send(tgbotapi.NewEditMessageText(update.Message.Chat.ID, statusMsg.MessageID, "❌ Ошибка при загрузке файла: "+err.Error()))
-			return
-		}
-		
-		// Обновляем статус
-		b.api.Send(tgbotapi.NewEditMessageText(update.Message.Chat.ID, statusMsg.MessageID, "✅ Файл загружен, импортирую слова..."))
-		
-		// Импортируем слова
-		config := excel.DefaultImportConfig()
-		config.FilePath = tempFilePath
-		result, err := excel.ImportWords(config)
-		
-		if err != nil {
-			b.api.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "❌ Ошибка при импорте: "+err.Error()))
-			return
-		}
-		
-		// Формируем отчет и отправляем его
-		reportText := formatImportReport(result)
-		b.api.Send(tgbotapi.NewMessage(update.Message.Chat.ID, reportText))
-		
-		// Убираем пользователя из списка ожидающих загрузку файла
-		delete(b.awaitingFileUpload, update.Message.From.ID)
-		
-		return
-	}
-}
-
-// handleMessage processes text messages and commands
-func (b *Bot) handleMessage(message *tgbotapi.Message) {
-	// Check if it's a command
-	if message.IsCommand() {
-		b.handleCommand(message)
-		return
-	}
-
-	// Handle regular text messages based on user state
-	// This would be implemented with a user state manager
-	// For now, just reply with a placeholder message
-	msg := tgbotapi.NewMessage(message.Chat.ID, "I'm not sure what to do with that message. Try using one of the commands like /start or /help.")
-	b.api.Send(msg)
-}
-
-// handleCommand processes bot commands
-func (b *Bot) handleCommand(message *tgbotapi.Message) {
-	userID := message.From.ID
-	
-	// Register user if not exists
-	b.registerUserIfNeeded(userID, message.From.UserName, message.From.FirstName, message.From.LastName)
-
-	switch message.Command() {
-	case "start":
-		b.handleStartCommand(message)
-	case "help":
-		b.handleHelpCommand(message)
-	case "learn":
-		b.handleLearnCommand(message)
-	case "stats":
-		b.handleStatsCommand(message)
-	case "settings":
-		b.handleSettingsCommand(message)
-	case "test":
-		b.handleTestCommand(message)
-	case "import":
-		// Admin-only command
-		if b.isAdmin(userID) {
-			b.handleImportCommand(message)
-		} else {
-			msg := tgbotapi.NewMessage(message.Chat.ID, "This command is only available for administrators.")
-			b.api.Send(msg)
-		}
-	case "admin_stats":
-		// Admin-only command
-		if b.isAdmin(userID) {
-			b.handleAdminStatsCommand(message)
-		} else {
-			msg := tgbotapi.NewMessage(message.Chat.ID, "This command is only available for administrators.")
-			b.api.Send(msg)
-		}
-	default:
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Unknown command. Use /help to see available commands.")
+		// Handle regular text messages
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Используйте команду /add для добавления новых слов или /help для получения списка доступных команд.")
 		b.api.Send(msg)
-	}
-}
-
-// handleCallbackQuery processes inline keyboard button presses
-func (b *Bot) handleCallbackQuery(callbackQuery *tgbotapi.CallbackQuery) {
-	// Acknowledge the callback query
-	callback := tgbotapi.NewCallback(callbackQuery.ID, "")
-	b.api.Request(callback)
-
-	// Extract data from the callback
-	data := callbackQuery.Data
-	userID := callbackQuery.From.ID
-
-	// Handle different callback types
-	if strings.HasPrefix(data, "topic_") {
-		// Topic selection callback
-		topicID, err := strconv.Atoi(strings.TrimPrefix(data, "topic_"))
-		if err != nil {
-			log.Printf("Error parsing topic ID: %v", err)
-			return
-		}
-		b.handleTopicSelection(userID, callbackQuery.Message.Chat.ID, topicID)
-	} else if strings.HasPrefix(data, "quality_") {
-		// Quality response for spaced repetition
-		parts := strings.Split(data, "_")
-		if len(parts) != 3 {
-			log.Printf("Invalid quality callback format: %s", data)
-			return
-		}
+	} else if update.CallbackQuery != nil {
+		// Acknowledge the callback query
+		callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+		b.api.Request(callback)
 		
-		wordID, err := strconv.Atoi(parts[1])
-		if err != nil {
-			log.Printf("Error parsing word ID: %v", err)
-			return
-		}
+		// Extract data from the callback
+		data := update.CallbackQuery.Data
+		userID := update.CallbackQuery.From.ID
+		chatID := update.CallbackQuery.Message.Chat.ID
 		
-		quality, err := strconv.Atoi(parts[2])
-		if err != nil {
-			log.Printf("Error parsing quality: %v", err)
-			return
+		// Handle different callback types
+		if strings.HasPrefix(data, "topic_") {
+			// Topic selection callback
+			topicID, err := strconv.Atoi(strings.TrimPrefix(data, "topic_"))
+			if err != nil {
+				log.Printf("Error parsing topic ID: %v", err)
+				return
+			}
+			b.handleTopicSelection(userID, chatID, topicID)
+		} else if data == "settings_topics" {
+			// Handle topics settings
+			b.handleTopicsSettings(userID, chatID)
+		} else if data == "settings_notification_time" {
+			// Handle notification time settings
+			b.handleNotificationTimeSettings(userID, chatID)
+		} else if data == "settings_words_per_day" {
+			// Handle words per day settings
+			b.handleWordsPerDaySettings(userID, chatID)
+		} else if data == "learn" {
+			// Handle learn button from stats
+			b.handleLearnCommand(&tgbotapi.Message{
+				From: &tgbotapi.User{ID: userID},
+				Chat: &tgbotapi.Chat{ID: chatID},
+			})
+		} else if data == "back_to_settings" {
+			// Back to main settings menu
+			b.handleSettingsCommand(&tgbotapi.Message{
+				From: &tgbotapi.User{ID: userID},
+				Chat: &tgbotapi.Chat{ID: chatID},
+			})
+		} else if strings.HasPrefix(data, "notify_time_") {
+			// Handle notification time selection
+			hour, err := strconv.Atoi(strings.TrimPrefix(data, "notify_time_"))
+			if err != nil {
+				log.Printf("Error parsing notification hour: %v", err)
+				return
+			}
+			b.handleNotificationTimeChange(userID, chatID, hour)
+		} else if data == "toggle_notifications" {
+			// Handle toggling notifications on/off
+			b.handleToggleNotifications(userID, chatID)
+		} else if strings.HasPrefix(data, "words_per_day_") {
+			// Handle words per day selection
+			count, err := strconv.Atoi(strings.TrimPrefix(data, "words_per_day_"))
+			if err != nil {
+				log.Printf("Error parsing words per day: %v", err)
+				return
+			}
+			b.handleWordsPerDayChange(userID, chatID, count)
+		} else if data == "next_words" {
+			// Show next group of words in learning
+			b.showNextWordGroup(chatID, userID)
+		} else if strings.HasPrefix(data, "words_count_") {
+			// Handle words count selection
+			count, err := strconv.Atoi(strings.TrimPrefix(data, "words_count_"))
+			if err != nil {
+				log.Printf("Error parsing words count: %v", err)
+				return
+			}
+			b.handleWordsCountSelection(userID, chatID, count)
 		}
-		
-		b.handleQualityResponse(userID, callbackQuery.Message.Chat.ID, wordID, quality)
-	} else if strings.HasPrefix(data, "test_") {
-		// Test answer selection
-		parts := strings.Split(data, "_")
-		if len(parts) != 3 {
-			log.Printf("Invalid test callback format: %s", data)
-			return
-		}
-		
-		wordID, err := strconv.Atoi(parts[1])
-		if err != nil {
-			log.Printf("Error parsing word ID: %v", err)
-			return
-		}
-		
-		answerIndex, err := strconv.Atoi(parts[2])
-		if err != nil {
-			log.Printf("Error parsing answer index: %v", err)
-			return
-		}
-		
-		b.handleTestAnswer(userID, callbackQuery.Message.Chat.ID, wordID, answerIndex)
-	} else if data == "settings_topics" {
-		// Handle topics settings
-		b.handleTopicsSettings(userID, callbackQuery.Message.Chat.ID)
-	} else if data == "settings_notification_time" {
-		// Handle notification time settings
-		b.handleNotificationTimeSettings(userID, callbackQuery.Message.Chat.ID)
-	} else if data == "settings_words_per_day" {
-		// Handle words per day settings
-		b.handleWordsPerDaySettings(userID, callbackQuery.Message.Chat.ID)
-	} else if data == "learn" {
-		// Handle learn button from stats
-		b.handleLearnCommand(&tgbotapi.Message{
-			From: &tgbotapi.User{ID: userID},
-			Chat: &tgbotapi.Chat{ID: callbackQuery.Message.Chat.ID},
-		})
-	} else if data == "back_to_settings" {
-		// Back to main settings menu
-		b.handleSettingsCommand(&tgbotapi.Message{
-			From: &tgbotapi.User{ID: userID},
-			Chat: &tgbotapi.Chat{ID: callbackQuery.Message.Chat.ID},
-		})
-	} else if strings.HasPrefix(data, "notify_time_") {
-		// Handle notification time selection
-		hour, err := strconv.Atoi(strings.TrimPrefix(data, "notify_time_"))
-		if err != nil {
-			log.Printf("Error parsing notification hour: %v", err)
-			return
-		}
-		b.handleNotificationTimeChange(userID, callbackQuery.Message.Chat.ID, hour)
-	} else if data == "toggle_notifications" {
-		// Handle toggling notifications on/off
-		b.handleToggleNotifications(userID, callbackQuery.Message.Chat.ID)
-	} else if strings.HasPrefix(data, "words_per_day_") {
-		// Handle words per day selection
-		count, err := strconv.Atoi(strings.TrimPrefix(data, "words_per_day_"))
-		if err != nil {
-			log.Printf("Error parsing words per day: %v", err)
-			return
-		}
-		b.handleWordsPerDayChange(userID, callbackQuery.Message.Chat.ID, count)
 	}
 }
 
@@ -421,58 +453,55 @@ func (b *Bot) registerUserIfNeeded(userID int64, username, firstName, lastName s
 
 // Command handlers
 func (b *Bot) handleStartCommand(message *tgbotapi.Message) {
-	welcomeText := fmt.Sprintf(
-		"Welcome to English Words Bot, %s!\n\n"+
-			"This bot will help you learn English words using spaced repetition.\n\n"+
-			"Commands:\n"+
-			"/start - Start the bot\n"+
-			"/help - Show help information\n"+
-			"/learn - Start learning words\n"+
-			"/stats - View your learning statistics\n"+
-			"/settings - Configure your preferences\n"+
-			"/test - Test your knowledge\n\n"+
-			"Let's get started by selecting some topics you're interested in.",
-		message.From.FirstName,
-	)
+	userID := message.From.ID
+	
+	// Register user if not exists
+	b.registerUserIfNeeded(userID, message.From.UserName, message.From.FirstName, message.From.LastName)
+	
+	// Send welcome message with instruction
+	welcomeText := "👋 Добро пожаловать в бота для изучения английских слов!\n\n" +
+		"🔤 Этот бот поможет вам запоминать английские слова с помощью простой системы карточек.\n\n" +
+		"*Как пользоваться ботом:*\n" +
+		"1️⃣ Используйте команду /add для добавления новых слов\n\n" +
+		"2️⃣ Используйте команду /learn, чтобы начать изучение этих слов\n\n" +
+		"3️⃣ Бот будет показывать вам карточки по 5 слов с примерами\n\n" +
+		"4️⃣ Для продолжения нажимайте кнопку 'Следующие 5 слов'\n\n" +
+		"🔄 Регулярно повторяйте слова для лучшего запоминания!\n\n" +
+		"Используйте /help, чтобы увидеть список доступных команд."
 	
 	msg := tgbotapi.NewMessage(message.Chat.ID, welcomeText)
-	
-	// Add a button to select topics
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Select Topics", "settings_topics"),
-		),
-	)
-	msg.ReplyMarkup = keyboard
+	msg.ParseMode = "Markdown"
 	
 	b.api.Send(msg)
 }
 
 func (b *Bot) handleHelpCommand(message *tgbotapi.Message) {
-	helpText := "English Words Bot Help\n\n" +
-		"Commands:\n" +
-		"/start - Start the bot and get an introduction\n" +
-		"/help - Show this help message\n" +
-		"/learn - Start your daily learning session\n"+
-		"/stats - View your learning statistics\n"+
-		"/settings - Configure your preferences\n"+
-		"/test - Test your knowledge with quizzes\n\n" +
-		"How it works:\n" +
-		"1. The bot will show you words based on your selected topics\n" +
-		"2. After seeing a word, you rate how well you know it\n" +
-		"3. Based on your rating, the bot schedules the next review using spaced repetition\n" +
-		"4. Words you know well will appear less frequently, while difficult words will appear more often\n\n" +
-		"Tips:\n" +
-		"- Be honest when rating your knowledge\n" +
-		"- Regular practice is key to effective learning\n" +
-		"- Use the /test command to verify your progress"
+	helpText := "*Бот для изучения английских слов*\n\n" +
+		"*Команды:*\n" +
+		"/start - Начать использование бота\n" +
+		"/help - Показать это сообщение с помощью\n" +
+		"/add - Добавить новые слова вручную\n" +
+		"/learn - Начать изучение слов (по 5 слов на карточку)\n" +
+		"/stats - Посмотреть статистику обучения\n" +
+		"/settings - Настроить параметры\n\n" +
+		"*Как это работает:*\n" +
+		"1. Отправьте боту список слов через команду /add\n" +
+		"2. Запустите команду /learn для изучения\n" +
+		"3. Бот будет показывать карточки по 5 слов\n" +
+		"4. Кнопка 'Следующие 5 слов' переключает карточки\n\n" +
+		"*Советы:*\n" +
+		"- Для каждого слова генерируется пример использования\n" +
+		"- Регулярное повторение - ключ к эффективному запоминанию\n" +
+		"- Используйте выученные слова в речи и на письме"
 	
 	msg := tgbotapi.NewMessage(message.Chat.ID, helpText)
+	msg.ParseMode = "Markdown"
 	b.api.Send(msg)
 }
 
 func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 	userID := message.From.ID
+	chatID := message.Chat.ID
 	
 	// Get user's due words or new words if no due words
 	progressRepo := database.NewUserProgressRepository()
@@ -483,7 +512,7 @@ func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 	user, err := userRepo.GetByID(userID)
 	if err != nil {
 		log.Printf("Error getting user %d: %v", userID, err)
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Произошла ошибка при получении ваших настроек. Пожалуйста, попробуйте позже.")
+		msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при получении ваших настроек. Пожалуйста, попробуйте позже.")
 		b.api.Send(msg)
 		return
 	}
@@ -492,7 +521,7 @@ func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 	dueProgress, err := progressRepo.GetDueWordsForUser(userID)
 	if err != nil {
 		log.Printf("Error getting due words: %v", err)
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Произошла ошибка при получении слов для изучения. Пожалуйста, попробуйте позже.")
+		msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при получении слов для изучения. Пожалуйста, попробуйте позже.")
 		b.api.Send(msg)
 		return
 	}
@@ -502,40 +531,54 @@ func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 	
 	if len(dueProgress) > 0 {
 		// Get the words corresponding to the due progress records
-		for _, progress := range dueProgress {
+		// Сохраняем порядок добавления слов
+		wordIDs := make([]int, len(dueProgress))
+		wordMap := make(map[int]models.Word)
+		
+		for i, progress := range dueProgress {
+			wordIDs[i] = progress.WordID
 			word, err := wordRepo.GetByID(progress.WordID)
 			if err != nil {
 				log.Printf("Error getting word %d: %v", progress.WordID, err)
 				continue
 			}
-			wordsToLearn = append(wordsToLearn, *word)
-			
-			// Limit to user's words per day setting
-			if len(wordsToLearn) >= user.WordsPerDay {
-				break
+			wordMap[progress.WordID] = *word
+		}
+		
+		// Добавляем слова в порядке их ID, чтобы сохранить порядок добавления
+		for _, id := range wordIDs {
+			if word, ok := wordMap[id]; ok {
+				wordsToLearn = append(wordsToLearn, word)
 			}
 		}
 	} else {
-		// No due words, get new words from user's preferred topics
+		// No due words, get new words from all available or user's preferred topics
 		isNewWords = true
 		
+		// Get all topics if user has no preferred topics
+		var topicIDs []int64
 		if len(user.PreferredTopics) == 0 {
-			msg := tgbotapi.NewMessage(message.Chat.ID, "У вас нет выбранных тем для изучения. Пожалуйста, выберите темы в настройках (/settings).")
-			b.api.Send(msg)
-			return
+			topicRepo := database.NewTopicRepository()
+			topics, err := topicRepo.GetAll()
+			if err != nil {
+				log.Printf("Error getting topics: %v", err)
+				msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при получении тем. Пожалуйста, попробуйте позже.")
+				b.api.Send(msg)
+				return
+			}
+			for _, topic := range topics {
+				topicIDs = append(topicIDs, topic.ID)
+			}
+		} else {
+			topicIDs = user.PreferredTopics
 		}
 		
-		// Get random words from user's preferred topics
-		for _, topicID := range user.PreferredTopics {
-			// Check if we already have enough words
-			if len(wordsToLearn) >= user.WordsPerDay {
-				break
-			}
-			
-			// Get words from this topic
-			words, err := wordRepo.GetRandomWordsByTopic(topicID, user.WordsPerDay-len(wordsToLearn))
+		// Получаем слова в порядке их добавления (по ID)
+		for _, topicID := range topicIDs {
+			// Get words from this topic in order of creation
+			words, err := wordRepo.GetAll()
 			if err != nil {
-				log.Printf("Error getting random words for topic %d: %v", topicID, err)
+				log.Printf("Error getting words for topic %d: %v", topicID, err)
 				continue
 			}
 			
@@ -546,106 +589,240 @@ func (b *Bot) handleLearnCommand(message *tgbotapi.Message) {
 	
 	// Check if we have any words to learn
 	if len(wordsToLearn) == 0 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, "У вас нет слов для изучения сегодня. Попробуйте позже или выберите другие темы в настройках (/settings).")
+		msg := tgbotapi.NewMessage(chatID, "У вас нет слов для изучения. Пожалуйста, добавьте слова, отправив их списком в формате 'слово - перевод'.")
 		b.api.Send(msg)
 		return
 	}
 	
 	// Start the learning session
-	sessionType := " (новые слова)"
+	sessionType := "новые слова"
 	if !isNewWords {
-		sessionType = " для повторения"
+		sessionType = "слова для повторения"
 	}
-	msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Начинаем изучение! У вас %d слов%s.", 
-		len(wordsToLearn), 
+	
+	totalWords := len(wordsToLearn)
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Начинаем изучение! У вас %d %s.", 
+		totalWords, 
 		sessionType))
 	b.api.Send(msg)
+	
+	// Ask user how many words they want to see per session
+	askMsg := tgbotapi.NewMessage(chatID, "Выберите, по сколько слов вы хотите изучать за раз:")
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔢 5 слов", "words_count_5"),
+			tgbotapi.NewInlineKeyboardButtonData("🔢 10 слов", "words_count_10"),
+			tgbotapi.NewInlineKeyboardButtonData("🔢 15 слов", "words_count_15"),
+		),
+	)
+	askMsg.ReplyMarkup = keyboard
+	b.api.Send(askMsg)
 	
 	// Сохраняем сессию обучения для этого пользователя
 	b.learningSessions[userID] = learningSession{
 		Words:      wordsToLearn,
 		CurrentIdx: 0,
+		WordsPerGroup: 5, // Default to 5 words per group
 	}
-	
-	// Show the first word
-	b.showWord(message.Chat.ID, userID, wordsToLearn[0])
 }
 
-// showWord displays a word with context to the user
-func (b *Bot) showWord(chatID int64, _ int64, word models.Word) {
-	// Generate Example for Context if empty
-	var context string
-	var translation string
-	var conjugation string
+// showNextWordGroup displays the next group of words (up to 5) for learning
+func (b *Bot) showNextWordGroup(chatID int64, userID int64) {
+	session, exists := b.learningSessions[userID]
+	if !exists {
+		log.Printf("No active learning session for user %d", userID)
+		return
+	}
 	
-	if b.chatGPT != nil {
-		// Try to generate a new example with ChatGPT
-		// Since context field is not stored in DB, always generate a new one
-		example, err := b.chatGPT.GenerateExample(&word)
-		if err == nil {
-			context = example
+	// Если количество слов не выбрано, используем значение по умолчанию
+	if session.WordsPerGroup == 0 {
+		session.WordsPerGroup = 5
+		b.learningSessions[userID] = session
+	}
+	
+	// Calculate how many words left to show
+	wordsLeft := len(session.Words) - session.CurrentIdx
+	if wordsLeft <= 0 {
+		// End of session
+		msg := tgbotapi.NewMessage(chatID, "🎉 Поздравляем! Вы закончили изучение всех слов в этой сессии. Используйте /learn, чтобы начать новую сессию.")
+		b.api.Send(msg)
+		
+		// Clear session
+		delete(b.learningSessions, userID)
+		return
+	}
+	
+	// Determine how many words to show
+	groupSize := session.WordsPerGroup
+	if wordsLeft < groupSize {
+		groupSize = wordsLeft
+	}
+	
+	// Get the words for this group
+	wordGroup := session.Words[session.CurrentIdx:session.CurrentIdx+groupSize]
+	
+	// Display the words
+	b.showWordGroup(chatID, wordGroup, session.CurrentIdx/groupSize+1, (len(session.Words)+groupSize-1)/groupSize)
+	
+	// Update session index
+	session.CurrentIdx += groupSize
+	b.learningSessions[userID] = session
+	
+	// Schedule next review for these words using spaced repetition
+	progressRepo := database.NewUserProgressRepository()
+	
+	// Update progress for each word
+	for _, word := range wordGroup {
+		// Get or create progress record
+		progress, err := progressRepo.GetByUserAndWord(userID, word.ID)
+		if err != nil {
+			// If record doesn't exist, create a new one with initial interval
+			progress = &models.UserProgress{
+				UserID:          userID,
+				WordID:          word.ID,
+				EasinessFactor:  2.5, // Default value
+				Interval:        1,   // Start with 1 day
+				Repetitions:     0,
+				LastQuality:     3, // Assume average quality
+				ConsecutiveRight: 0,
+				LastReviewDate:  time.Now().Format(time.RFC3339),
+				NextReviewDate:  time.Now().AddDate(0, 0, 1).Format(time.RFC3339), // Tomorrow
+			}
+			
+			// Save new progress
+			err = progressRepo.Create(progress)
+			if err != nil {
+				log.Printf("Error creating progress for word %d: %v", word.ID, err)
+			}
 		} else {
-			context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.Word)
+			// Update existing progress
+			// Increment repetitions
+			progress.Repetitions++
+			
+			// Use the SM-2 algorithm to determine the next interval
+			sm2 := spaced_repetition.NewSM2()
+			var nextInterval int
+			
+			if progress.Repetitions < len(sm2.InitialIntervals) {
+				// Use predefined intervals for early repetitions
+				nextInterval = sm2.InitialIntervals[progress.Repetitions]
+			} else {
+				// For later repetitions, double the interval
+				nextInterval = progress.Interval * 2
+				if nextInterval > sm2.MaxInterval {
+					nextInterval = sm2.MaxInterval
+				}
+			}
+			
+			// Update progress record
+			now := time.Now()
+			progress.LastReviewDate = now.Format(time.RFC3339)
+			progress.Interval = nextInterval
+			progress.NextReviewDate = now.AddDate(0, 0, nextInterval).Format(time.RFC3339)
+			
+			// Save updated progress
+			err = progressRepo.Update(progress)
+			if err != nil {
+				log.Printf("Error updating progress for word %d: %v", word.ID, err)
+			}
+		}
+	}
+}
+
+// showWordGroup displays a group of words in a single card
+func (b *Bot) showWordGroup(chatID int64, words []models.Word, _, _ int) {
+	var messageText strings.Builder
+	
+	// Собираем слова для генерации текста
+	wordsForExample := make([]string, 0, len(words))
+	
+	// Process each word and add it to the message
+	for i, word := range words {
+		// Generate an example using ChatGPT if needed
+		example := word.Examples
+		if example == "" && b.chatGPT != nil {
+			generatedExample, err := b.chatGPT.GenerateExamples(word.Word, 1)
+			if err == nil {
+				example = generatedExample
+			}
 		}
 		
-		// Try to generate verb conjugation if it's a verb
-		verbConjugation, err := b.chatGPT.GenerateVerbConjugation(word.Word)
-		if err == nil && verbConjugation != "" {
-			conjugation = verbConjugation
+		// Добавляем слово для генерации примера текста
+		wordsForExample = append(wordsForExample, word.Word)
+		
+		// Word number and main word with pronunciation
+		messageText.WriteString(fmt.Sprintf("*%d. %s*", i+1, word.Word))
+		if word.Pronunciation != "" {
+			messageText.WriteString(fmt.Sprintf(" [%s]", word.Pronunciation))
 		}
-	} else {
-		context = fmt.Sprintf("Example: The word '%s' is useful in everyday conversations.", word.Word)
+		messageText.WriteString("\n")
+		
+		// Проверяем, есть ли формы неправильного глагола
+		if word.VerbForms != "" {
+			// Прямой вывод сохраненных форм глагола
+			messageText.WriteString(fmt.Sprintf("Формы глагола:\n%s\n", word.VerbForms))
+		} else if b.chatGPT != nil {
+			// Получаем формы глагола
+			verbForms, err := b.chatGPT.GenerateIrregularVerbForms(word.Word)
+			if err == nil && verbForms != "" && !strings.Contains(verbForms, "Not a verb") {
+				// Форматируем вывод форм глагола без "Infinitive:", "Past Simple:" и т.д.
+				verbFormsLines := strings.Split(verbForms, "\n")
+				var formattedVerbForms strings.Builder
+				formattedVerbForms.WriteString("Формы глагола:\n")
+				
+				for _, line := range verbFormsLines {
+					if strings.Contains(line, ":") {
+						parts := strings.SplitN(line, ":", 2)
+						if len(parts) == 2 {
+							formattedVerbForms.WriteString(strings.TrimSpace(parts[1]) + "\n")
+						}
+					}
+				}
+				
+				messageText.WriteString(formattedVerbForms.String())
+			}
+		}
+		
+		// Translation
+		messageText.WriteString(fmt.Sprintf("Перевод: ➡️ *%s*\n", word.Translation))
+		
+		// Example if available
+		if example != "" {
+			// Extract just the first line of example
+			exampleLines := strings.Split(example, "\n")
+			if len(exampleLines) > 0 {
+				messageText.WriteString(fmt.Sprintf("Пример: ✏️ %s\n", exampleLines[0]))
+			}
+		}
+		
+		// Add space between words
+		messageText.WriteString("\n")
 	}
 	
-	// Get translation of the context if possible
-	if b.chatGPT != nil {
-		// Try to translate the context
-		translation = b.chatGPT.TranslateText(context)
+	// Add separator at the bottom
+	messageText.WriteString("━━━━━━━━━━━━━━━━━━━━━\n")
+	
+	// Генерируем текст с использованием изучаемых слов
+	if b.chatGPT != nil && len(wordsForExample) > 0 {
+		englishText, russianText := b.chatGPT.GenerateTextWithWords(words, len(words))
+		if englishText != "" {
+			messageText.WriteString("\n*Пример текста с изучаемыми словами:*\n\n")
+			messageText.WriteString(fmt.Sprintf("🇬🇧 %s\n\n", englishText))
+			if russianText != "" {
+				messageText.WriteString(fmt.Sprintf("🇷🇺 %s\n", russianText))
+			}
+		}
 	}
 	
-	if translation == "" {
-		translation = "Перевод недоступен."
-	}
-	
-	// Format the word card with improved visual separation
-	wordCard := "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-	wordCard += fmt.Sprintf("*🔤 %s* - _%s_\n\n", word.Word, word.Translation)
-	
-	// Add pronunciation if available
-	if word.Pronunciation != "" {
-		wordCard += fmt.Sprintf("📢 *Произношение:* %s\n\n", word.Pronunciation)
-	}
-	
-	// Add context with translation
-	wordCard += fmt.Sprintf("📝 *Пример:*\n%s\n\n", context)
-	wordCard += fmt.Sprintf("🔄 *Перевод:*\n%s\n\n", translation)
-	
-	// Add verb conjugation if available
-	if conjugation != "" {
-		wordCard += fmt.Sprintf("🔀 *Формы глагола:*\n%s\n\n", conjugation)
-	}
-	
-	wordCard += "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-	wordCard += "Насколько хорошо вы знаете это слово?"
-	
-	msg := tgbotapi.NewMessage(chatID, wordCard)
+	// Create message with markdown
+	msg := tgbotapi.NewMessage(chatID, messageText.String())
 	msg.ParseMode = "Markdown"
 	
-	// Add quality rating buttons
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Не знаю", fmt.Sprintf("quality_%d_1", word.ID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⚠️ Сомневаюсь", fmt.Sprintf("quality_%d_3", word.ID)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Знаю", fmt.Sprintf("quality_%d_5", word.ID)),
-		),
-	)
-	msg.ReplyMarkup = keyboard
-	
-	b.api.Send(msg)
+	// Send the message
+	_, err := b.api.Send(msg)
+	if err != nil {
+		log.Printf("Error sending word group: %v", err)
+	}
 }
 
 func (b *Bot) handleStatsCommand(message *tgbotapi.Message) {
@@ -704,52 +881,15 @@ func (b *Bot) handleSettingsCommand(message *tgbotapi.Message) {
 	b.api.Send(msg)
 }
 
-func (b *Bot) handleTestCommand(message *tgbotapi.Message) {
-	// This is a placeholder implementation
-	// In a real implementation, you would:
-	// 1. Select words for testing
-	// 2. Create a test session
-	// 3. Show the first question
-	
-	// Create testing module and generate a test
-	_ = testing.NewTestingModule()
-	
-	// Create a random test
-	msg := tgbotapi.NewMessage(message.Chat.ID, "Testing your knowledge! Choose the correct translation:")
-	b.api.Send(msg)
-	
-	// Example test question (this would be replaced with actual test data)
-	questionText := "What is the translation of *example*?"
-	
-	msg = tgbotapi.NewMessage(message.Chat.ID, questionText)
-	msg.ParseMode = "Markdown"
-	
-	// Add answer options
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("пример", "test_1_0"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("образец", "test_1_1"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("модель", "test_1_2"),
-		),
-	)
-	msg.ReplyMarkup = keyboard
-	
-	b.api.Send(msg)
-}
-
 func (b *Bot) handleImportCommand(message *tgbotapi.Message) {
 	// Admin-only command for importing words from Excel
 	msg := tgbotapi.NewMessage(message.Chat.ID, "To import words from Excel or CSV, please upload a file. The file should contain:\n\n"+
 		"For custom format:\n"+
-		"- Words structured as: English word,[transcription],translation\n"+
+		"- Words structured as: English word,[transcription],translation\n" +
 		"- Topic headers like \"Movement,\" or \"Communication,,\"\n\n"+
 		"For standard format:\n"+
 		"- Column A: English word\n"+
-		"- Column B: Translation\n"+
+		"- Column B: Translation\n" +
 		"- Column C: Description (example sentence)\n"+
 		"- Column D: Topic (required)\n"+
 		"- Column E: Difficulty (1-5)\n\n"+
@@ -839,297 +979,6 @@ func (b *Bot) handleTopicSelection(userID int64, chatID int64, topicID int) {
 	
 	msg := tgbotapi.NewMessage(chatID, msgText)
 	b.api.Send(msg)
-}
-
-// handleQualityResponse обрабатывает ответ пользователя о качестве запоминания
-func (b *Bot) handleQualityResponse(userID int64, chatID int64, wordID int, quality int) {
-	// Применяем алгоритм интервального повторения
-	progressRepo := database.NewUserProgressRepository()
-	wordRepo := database.NewWordRepository()
-	
-	// Получаем слово для вывода информации
-	word, err := wordRepo.GetByID(wordID)
-	if err != nil {
-		log.Printf("Error getting word %d: %v", wordID, err)
-		msg := tgbotapi.NewMessage(chatID, "Произошла ошибка при получении информации о слове.")
-		b.api.Send(msg)
-		return
-	}
-	
-	// Получаем или создаем прогресс для данного слова и пользователя
-	progress, err := progressRepo.GetByUserAndWord(userID, wordID)
-	if err != nil {
-		// Если записи нет, создаем новую
-		progress = &models.UserProgress{
-			UserID:          userID,
-			WordID:          wordID,
-			EasinessFactor:  2.5, // Начальное значение
-			Interval:        0,
-			Repetitions:     0,
-			LastQuality:     quality,
-			ConsecutiveRight: 0,
-			LastReviewDate:  time.Now().Format(time.RFC3339),
-			NextReviewDate:  time.Now().Format(time.RFC3339), // Будет обновлено алгоритмом
-		}
-	}
-	
-	// Обновляем запись прогресса с учетом качества ответа
-	if quality >= 3 {
-		progress.ConsecutiveRight++
-	} else {
-		progress.ConsecutiveRight = 0
-	}
-	
-	// Сохраняем старый интервал для отображения
-	oldInterval := progress.Interval
-	
-	// Применяем алгоритм SM-2
-	b.sm2.Process(progress, spaced_repetition.QualityResponse(quality))
-	
-	// Сохраняем обновленный прогресс
-	if progress.ID == 0 {
-		err = progressRepo.Create(progress)
-	} else {
-		err = progressRepo.Update(progress)
-	}
-	
-	if err != nil {
-		log.Printf("Error updating progress: %v", err)
-	}
-	
-	// Определяем эмоджи на основе качества ответа
-	qualityEmoji := "❓"
-	switch {
-	case quality >= 4:
-		qualityEmoji = "🌟" // Звезда - отлично знаю
-	case quality >= 3:
-		qualityEmoji = "✅" // Галочка - помню
-	case quality >= 2:
-		qualityEmoji = "⚠️" // Предупреждение - с трудом
-	default:
-		qualityEmoji = "❌" // Крестик - не знаю
-	}
-	
-	// Формируем сообщение с информацией о прогрессе
-	responseMsg := "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-	responseMsg += fmt.Sprintf("%s *%s* - _%s_\n\n", qualityEmoji, word.Word, word.Translation)
-	
-	// Добавляем информацию о прогрессе
-	var nextDate string
-	// Если NextReviewDate уже в строковом формате, пробуем его распарсить и отформатировать
-	if reviewDate, err := time.Parse(time.RFC3339, progress.NextReviewDate); err == nil {
-		nextDate = reviewDate.Format("02.01.2006")
-	} else {
-		// Если не получилось распарсить, используем как есть
-		nextDate = progress.NextReviewDate
-	}
-	responseMsg += "*📊 Статистика изучения:*\n"
-	
-	if oldInterval > 0 {
-		responseMsg += fmt.Sprintf("• *Интервал:* %d → %d дн.\n", oldInterval, progress.Interval)
-	} else {
-		responseMsg += fmt.Sprintf("• *Интервал:* %d дн.\n", progress.Interval)
-	}
-	
-	responseMsg += fmt.Sprintf("• *Повторений:* %d\n", progress.Repetitions)
-	responseMsg += fmt.Sprintf("• *Следующее повторение:* %s\n\n", nextDate)
-	
-	// Добавляем мотивационное сообщение
-	responseMsg += "*💬 Результат:* "
-	switch {
-	case quality >= 4:
-		responseMsg += "Отлично! Вы хорошо знаете это слово. 🎉"
-	case quality >= 3:
-		responseMsg += "Хорошо! Продолжайте практиковать это слово. 👍"
-	case quality >= 2:
-		responseMsg += "Неплохо. Это слово будет появляться чаще для повторения. 📝"
-	default:
-		responseMsg += "Понял. Мы будем повторять это слово чаще. 📚"
-	}
-	
-	responseMsg += "\n\n*━━━━━━━━━━━━━━━━━━━━━━━*"
-	
-	// Если слово изучено хорошо (качество >= 4), проверяем завершение темы
-	if quality >= 4 && progress.Repetitions >= 5 {
-		// Проверяем, завершил ли пользователь тему, к которой относится слово
-		topicStats, err := progressRepo.GetTopicCompletionStats(userID, word.TopicID)
-		if err == nil {
-			// Если пользователь изучил более 90% слов темы, показываем уведомление
-			completionPercentage := topicStats["completion_percentage"].(float64)
-			totalWordsInTopic := topicStats["total_words"].(int)
-			masteredWords := topicStats["mastered_words"].(int)
-			topicName := topicStats["topic_name"].(string)
-			
-			if completionPercentage >= 90 && totalWordsInTopic > 0 && masteredWords > 0 {
-				// Отправляем отдельное сообщение о завершении темы
-				topicMsg := fmt.Sprintf("*🏆 Поздравляем!*\n\n"+
-					"Вы почти завершили изучение темы *%s*!\n\n"+
-					"📊 *Статистика темы:*\n"+
-					"• Всего слов: %d\n"+
-					"• Изучено: %d\n"+
-					"• Завершено: %.1f%%\n\n"+
-					"Продолжайте в том же духе! 🌟", 
-					topicName, totalWordsInTopic, masteredWords, completionPercentage)
-				
-				topicCompleteMsg := tgbotapi.NewMessage(chatID, topicMsg)
-				topicCompleteMsg.ParseMode = "Markdown"
-				b.api.Send(topicCompleteMsg)
-			}
-		}
-	}
-	
-	msg := tgbotapi.NewMessage(chatID, responseMsg)
-	msg.ParseMode = "Markdown"
-	b.api.Send(msg)
-	
-	// Проверяем, есть ли еще слова в сессии
-	session, exists := b.learningSessions[userID]
-	if !exists {
-		msg = tgbotapi.NewMessage(chatID, "Сессия обучения завершена.")
-		b.api.Send(msg)
-		return
-	}
-	
-	// Увеличиваем индекс текущего слова
-	session.CurrentIdx++
-	
-	// Проверяем, есть ли еще слова
-	if session.CurrentIdx < len(session.Words) {
-		// Обновляем сессию
-		b.learningSessions[userID] = session
-		
-		// Показываем следующее слово
-		b.showWord(chatID, userID, session.Words[session.CurrentIdx])
-	} else {
-		// Если слов больше нет, завершаем сессию
-		
-		// Сохраняем изученные слова
-		completedWords := session.Words
-		
-		// Удаляем сессию
-		delete(b.learningSessions, userID)
-		
-		// Показываем итоги сессии с текстом на основе изученных слов
-		summaryMsg := "*━━━━━━━━━━━━━━━━━━━━━━━*\n\n"
-		
-		// Генерируем текст на основе изученных слов
-		if b.chatGPT != nil && len(completedWords) > 0 {
-			englishText, russianText := b.chatGPT.GenerateTextWithWords(completedWords, len(completedWords))
-			
-			if englishText != "" {
-				summaryMsg += "📝 *Практический текст с изученными словами:*\n\n"
-				summaryMsg += fmt.Sprintf("_%s_\n\n", englishText)
-				
-				if russianText != "" {
-					summaryMsg += fmt.Sprintf("*Перевод:* %s\n\n", russianText)
-				}
-			}
-		} else {
-			// Если ChatGPT недоступен, показываем базовое сообщение
-			summaryMsg += "🏆 *Сессия завершена*\n\n"
-		}
-		
-		summaryMsg += "*━━━━━━━━━━━━━━━━━━━━━━━*"
-		
-		msg = tgbotapi.NewMessage(chatID, summaryMsg)
-		msg.ParseMode = "Markdown"
-		b.api.Send(msg)
-	}
-}
-
-func (b *Bot) handleTestAnswer(_ int64, chatID int64, _ int, _ int) {
-	// This would check if the answer is correct
-	// For now, just say it's correct
-	msg := tgbotapi.NewMessage(chatID, "Correct! 🎉")
-	b.api.Send(msg)
-	
-	// Show next question or end test
-	msg = tgbotapi.NewMessage(chatID, "Test complete! Your score: 1/1")
-	b.api.Send(msg)
-}
-
-// downloadFile загружает файл по URL и сохраняет его по указанному пути
-func (b *Bot) downloadFile(url string, filepath string) error {
-	// Создаем HTTP-клиент с таймаутом
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-	
-	// Отправляем GET-запрос для загрузки файла
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	
-	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("плохой статус ответа: %s", resp.Status)
-	}
-	
-	// Создаем файл для записи
-	out, err := os.Create(filepath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	
-	// Копируем содержимое ответа в файл
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// Вспомогательная функция для форматирования сообщения об импорте
-func formatImportReport(result *excel.ImportResult) string {
-	// Формируем базовый отчет
-	reportText := "✅ Импорт успешно завершен!\n\n"+
-		"📊 Статистика импорта:\n"+
-		fmt.Sprintf("- Обработано строк: %d\n", result.TotalProcessed)+
-		fmt.Sprintf("- Создано тем: %d\n", result.TopicsCreated)+
-		fmt.Sprintf("- Добавлено новых слов: %d\n", result.Created)+
-		fmt.Sprintf("- Обновлено существующих слов: %d\n", result.Updated)+
-		fmt.Sprintf("- Пропущено слов: %d\n", result.Skipped)
-	
-	// Проверяем, сколько строк было пропущено
-	skippedRows := 0
-	for _, errMsg := range result.Errors {
-		if strings.Contains(errMsg, "skipping row") {
-			skippedRows++
-		}
-	}
-	
-	if skippedRows > 0 {
-		reportText += fmt.Sprintf("- Пропущено строк (заголовки, пустые): %d\n", skippedRows)
-	}
-	
-	// Фильтруем реальные ошибки (не skipping row)
-	var realErrors []string
-	for _, errMsg := range result.Errors {
-		if !strings.Contains(errMsg, "skipping row") {
-			realErrors = append(realErrors, errMsg)
-		}
-	}
-	
-	// Показываем предупреждения, если они есть
-	if len(realErrors) > 0 {
-		reportText += fmt.Sprintf("\n⚠️ Предупреждения при импорте:\n")
-		
-		// Показываем максимум 10 первых ошибок
-		errorsToShow := len(realErrors)
-		if errorsToShow > 10 {
-			errorsToShow = 10
-		}
-		
-		for i := 0; i < errorsToShow; i++ {
-			reportText += "- " + realErrors[i] + "\n"
-		}
-		
-		if len(realErrors) > errorsToShow {
-			reportText += fmt.Sprintf("... и еще %d предупреждений\n", len(realErrors)-errorsToShow)
-		}
-	}
-	
-	return reportText
 }
 
 // handleTopicsSettings shows available topics for selection
@@ -1365,10 +1214,184 @@ func (b *Bot) handleWordsPerDayChange(userID int64, chatID int64, count int) {
 	}
 	
 	// Отправляем подтверждение
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ Количество слов в день изменено на <b>%d</b>.", count))
-	msg.ParseMode = "HTML"
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ Количество слов в день изменено на %d.", count))
 	b.api.Send(msg)
 	
 	// Show words per day settings again
 	b.handleWordsPerDaySettings(userID, chatID)
+}
+
+// handleWordsCountSelection обрабатывает выбор количества слов для изучения
+func (b *Bot) handleWordsCountSelection(userID int64, chatID int64, count int) {
+	// Получаем текущую сессию
+	session, exists := b.learningSessions[userID]
+	if !exists {
+		log.Printf("No active learning session for user %d", userID)
+		return
+	}
+	
+	// Сохраняем выбранное количество слов
+	userRepo := database.NewUserRepository()
+	user, err := userRepo.GetByID(userID)
+	if err == nil {
+		user.WordsPerDay = count
+		userRepo.Update(user)
+	}
+	
+	// Обновляем текущую сессию
+	session.WordsPerGroup = count
+	b.learningSessions[userID] = session
+	
+	// Показываем первую группу слов
+	b.showNextWordGroup(chatID, userID)
+}
+
+// handleAddWordsCommand instructs the user how to add new words
+func (b *Bot) handleAddWordsCommand(message *tgbotapi.Message) {
+	userId := message.From.ID
+	
+	// Set user state to waiting for word list
+	b.userStates[userId] = UserState{
+		State:     "waiting_for_word_list",
+		Timestamp: time.Now(),
+		Data:      make(map[string]interface{}),
+	}
+	
+	instructions := "📝 *Добавление новых слов*\n\n" +
+		"Отправьте список слов для добавления в следующем формате:\n\n" +
+		"```\n" +
+		"слово - перевод\n" +
+		"```\n\n" +
+		"Чтобы отменить, отправьте /cancel"
+	
+	msg := tgbotapi.NewMessage(message.Chat.ID, instructions)
+	msg.ParseMode = "Markdown"
+	b.api.Send(msg)
+}
+
+// Process word list sent by the user
+func (b *Bot) processWordList(message *tgbotapi.Message) {
+	userId := message.From.ID
+	text := message.Text
+	
+	// Remove user from the waiting state
+	delete(b.userStates, userId)
+	
+	lines := strings.Split(text, "\n")
+	if len(lines) < 1 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "Список слов пуст. Используйте /add для получения инструкций.")
+		b.api.Send(msg)
+		return
+	}
+	
+	// Используем фиксированную тему "Общие слова"
+	topicName := "Общие слова"
+	
+	// Get or create topic
+	topic, err := b.repo.GetTopicByName(context.Background(), topicName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Create new topic
+			topicId, err := b.repo.CreateTopic(context.Background(), topicName)
+			if err != nil {
+				log.Printf("Error creating topic: %v", err)
+				msg := tgbotapi.NewMessage(message.Chat.ID, "Ошибка при создании темы. Попробуйте снова позже.")
+				b.api.Send(msg)
+				return
+			}
+			topic = models.Topic{ID: topicId}
+		} else {
+			log.Printf("Error getting topic: %v", err)
+			msg := tgbotapi.NewMessage(message.Chat.ID, "Ошибка при получении темы. Попробуйте снова позже.")
+			b.api.Send(msg)
+			return
+		}
+	}
+	
+	// Process word lines
+	var addedCount, errorCount int
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		parts := strings.Split(line, "-")
+		if len(parts) < 2 {
+			errorCount++
+			continue
+		}
+		
+		word := strings.TrimSpace(parts[0])
+		translation := strings.TrimSpace(parts[1])
+		
+		if word == "" || translation == "" {
+			errorCount++
+			continue
+		}
+		
+		var description, examples string
+		
+		if len(parts) >= 3 {
+			description = strings.TrimSpace(parts[2])
+		}
+		
+		if len(parts) >= 4 {
+			examples = strings.TrimSpace(parts[3])
+		}
+		
+		// Check if word already exists in this topic
+		existingWord, err := b.repo.GetWordByWordAndTopicID(context.Background(), word, topic.ID)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("Error checking existing word: %v", err)
+			errorCount++
+			continue
+		}
+		
+		if err == sql.ErrNoRows {
+			// Word doesn't exist, create it
+			_, err = b.repo.CreateWord(context.Background(), models.Word{
+				Word:        word,
+				Translation: translation,
+				Description: description,
+				Examples:    examples,
+				TopicID:     topic.ID,
+				Difficulty:  1, // Default difficulty
+			})
+			
+			if err != nil {
+				log.Printf("Error creating word: %v", err)
+				errorCount++
+				continue
+			}
+		} else {
+			// Word exists, update it
+			existingWord.Translation = translation
+			existingWord.Description = description
+			existingWord.Examples = examples
+			
+			err = b.repo.UpdateWord(context.Background(), existingWord)
+			if err != nil {
+				log.Printf("Error updating word: %v", err)
+				errorCount++
+				continue
+			}
+		}
+		
+		addedCount++
+	}
+	
+	// Send result message
+	var resultMsg string
+	if addedCount > 0 {
+		resultMsg = fmt.Sprintf("Успешно добавлено/обновлено %d слов в тему '%s'.", addedCount, topicName)
+		if errorCount > 0 {
+			resultMsg += fmt.Sprintf("\n%d слов не удалось обработать из-за ошибок формата.", errorCount)
+		}
+	} else {
+		resultMsg = "Не удалось добавить ни одного слова. Проверьте формат и попробуйте снова."
+	}
+	
+	msg := tgbotapi.NewMessage(message.Chat.ID, resultMsg)
+	b.api.Send(msg)
 } 

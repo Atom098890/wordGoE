@@ -359,4 +359,145 @@ func (c *ChatGPT) GenerateVerbConjugation(word string) (string, error) {
 	}
 
 	return conjugation, nil
+}
+
+// GenerateExamples generates multiple example sentences for the given word
+func (c *ChatGPT) GenerateExamples(word string, count int) (string, error) {
+	prompt := fmt.Sprintf(
+		"Generate %d practical example sentences in English that naturally include the word '%s'. Each example should be on a new line. Do not number the examples. Make them diverse and useful for language learning.",
+		count, word,
+	)
+
+	messages := []Message{
+		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - создавать качественные примеры использования английских слов."},
+		{Role: "user", Content: prompt},
+	}
+
+	request := ChatRequest{
+		Model:       "gpt-3.5-turbo",
+		Messages:    messages,
+		MaxTokens:   c.maxTokens * 2,  // More tokens for multiple examples
+		Temperature: c.temperature,
+	}
+
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var response ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	if response.Error != nil {
+		return "", fmt.Errorf("API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response choices returned")
+	}
+
+	// Clean up the response
+	examples := response.Choices[0].Message.Content
+	examples = strings.TrimSpace(examples)
+
+	return examples, nil
+}
+
+// GenerateIrregularVerbForms генерирует три формы неправильного глагола
+func (c *ChatGPT) GenerateIrregularVerbForms(word string) (string, error) {
+	prompt := fmt.Sprintf(
+		"Если '%s' является неправильным глаголом в английском языке, предоставьте его три основные формы в следующем формате:\n\n"+
+		"Infinitive: [базовая форма]\n"+
+		"Past Simple: [форма прошедшего времени]\n"+
+		"Past Participle: [форма причастия прошедшего времени]\n\n"+
+		"Если это не неправильный глагол, но это глагол, укажите 'Regular verb' и покажите формы с добавлением -ed.\n"+
+		"Если это вообще не глагол, ответьте 'Not a verb'.\n\n"+
+		"Пример для глагола 'go':\n"+
+		"Infinitive: go\n"+
+		"Past Simple: went\n"+
+		"Past Participle: gone",
+		word,
+	)
+
+	messages := []Message{
+		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - предоставлять информацию о формах неправильных глаголов в краткой и понятной форме."},
+		{Role: "user", Content: prompt},
+	}
+
+	request := ChatRequest{
+		Model:       "gpt-3.5-turbo",
+		Messages:    messages,
+		MaxTokens:   100,
+		Temperature: 0.3, // Низкая температура для более точных ответов
+	}
+
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var response ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	if response.Error != nil {
+		return "", fmt.Errorf("API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response choices returned")
+	}
+
+	verbForms := response.Choices[0].Message.Content
+	verbForms = strings.TrimSpace(verbForms)
+
+	return verbForms, nil
+}
+
+// CheckIrregularVerb проверяет, является ли слово неправильным глаголом и возвращает его формы
+func (c *ChatGPT) CheckIrregularVerb(word string) (bool, string, error) {
+	verbForms, err := c.GenerateIrregularVerbForms(word)
+	if err != nil {
+		return false, "", err
+	}
+	
+	// Если это не глагол или регулярный глагол, вернем false
+	if verbForms == "" || strings.Contains(verbForms, "Not a verb") || strings.Contains(verbForms, "Regular verb") {
+		return false, "", nil
+	}
+	
+	return true, verbForms, nil
 } 
