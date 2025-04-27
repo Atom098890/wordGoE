@@ -77,6 +77,8 @@ func (r *WordRepository) GetAll() ([]models.Word, error) {
 // GetByID returns a word by ID
 func (r *WordRepository) GetByID(id int) (*models.Word, error) {
 	var word models.Word
+	var description, pronunciation, examples, verbForms sql.NullString
+	
 	query := `
 		SELECT 
 			id, 
@@ -94,16 +96,38 @@ func (r *WordRepository) GetByID(id int) (*models.Word, error) {
 		WHERE id = ?
 	`
 	
-	err := DB.Get(&word, query, id)
+	err := DB.QueryRow(query, id).Scan(
+		&word.ID,
+		&word.Word,
+		&word.Translation,
+		&description,
+		&word.TopicID,
+		&word.Difficulty,
+		&pronunciation,
+		&examples,
+		&verbForms,
+		&word.CreatedAt,
+		&word.UpdatedAt,
+	)
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to get word by ID: %v", err)
 	}
+	
+	// Convert NULL values to empty strings
+	word.Description = description.String
+	word.Pronunciation = pronunciation.String
+	word.Examples = examples.String
+	word.VerbForms = verbForms.String
+	
 	return &word, nil
 }
 
 // GetByTopic returns words for a specific topic
 func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 	var words []models.Word
+	var description, pronunciation, examples, verbForms sql.NullString
+	
 	query := `
 		SELECT 
 			id, 
@@ -122,10 +146,40 @@ func (r *WordRepository) GetByTopic(topicID int64) ([]models.Word, error) {
 		ORDER BY word
 	`
 	
-	err := DB.Select(&words, query, topicID)
+	rows, err := DB.Query(query, topicID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get words by topic: %v", err)
 	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var word models.Word
+		err := rows.Scan(
+			&word.ID,
+			&word.Word,
+			&word.Translation,
+			&description,
+			&word.TopicID,
+			&word.Difficulty,
+			&pronunciation,
+			&examples,
+			&verbForms,
+			&word.CreatedAt,
+			&word.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan word: %v", err)
+		}
+		
+		// Convert NULL values to empty strings
+		word.Description = description.String
+		word.Pronunciation = pronunciation.String
+		word.Examples = examples.String
+		word.VerbForms = verbForms.String
+		
+		words = append(words, word)
+	}
+	
 	return words, nil
 }
 
@@ -252,14 +306,19 @@ func (r *WordRepository) SearchWords(query string) ([]models.Word, error) {
 // GetRandomWordsByTopic returns random words from a topic, limited by count
 func (r *WordRepository) GetRandomWordsByTopic(topicID int64, count int) ([]models.Word, error) {
 	var words []models.Word
+	var description, pronunciation, examples, verbForms sql.NullString
+	
 	query := `
 		SELECT 
 			id, 
 			word, 
 			translation, 
+			description,
 			topic_id, 
 			difficulty, 
-			pronunciation, 
+			pronunciation,
+			examples,
+			verb_forms,
 			created_at, 
 			updated_at
 		FROM words 
@@ -268,24 +327,60 @@ func (r *WordRepository) GetRandomWordsByTopic(topicID int64, count int) ([]mode
 		LIMIT ?
 	`
 	
-	err := DB.Select(&words, query, topicID, count)
+	rows, err := DB.Query(query, topicID, count)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get random words: %v", err)
 	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var word models.Word
+		err := rows.Scan(
+			&word.ID,
+			&word.Word,
+			&word.Translation,
+			&description,
+			&word.TopicID,
+			&word.Difficulty,
+			&pronunciation,
+			&examples,
+			&verbForms,
+			&word.CreatedAt,
+			&word.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan word: %v", err)
+		}
+		
+		// Convert NULL values to empty strings
+		word.Description = description.String
+		word.Pronunciation = pronunciation.String
+		word.Examples = examples.String
+		word.VerbForms = verbForms.String
+		
+		words = append(words, word)
+	}
+	
 	return words, nil
 }
 
 // GetWordByID retrieves a word by its ID
 func GetWordByID(wordID int) (*models.Word, error) {
-	word := &models.Word{}
+	var word models.Word
+	var description, pronunciation, examples, verbForms sql.NullString
+	var topicName sql.NullString
+	
 	query := `
 		SELECT 
 			w.id, 
 			w.word, 
 			w.translation, 
-			w.difficulty, 
+			w.description,
 			w.topic_id, 
+			w.difficulty, 
 			w.pronunciation,
+			w.examples,
+			w.verb_forms,
 			w.created_at,
 			w.updated_at,
 			t.name as topic
@@ -294,12 +389,32 @@ func GetWordByID(wordID int) (*models.Word, error) {
 		WHERE w.id = ?
 	`
 	
-	err := DB.QueryRowx(query, wordID).StructScan(word)
+	err := DB.QueryRow(query, wordID).Scan(
+		&word.ID,
+		&word.Word,
+		&word.Translation,
+		&description,
+		&word.TopicID,
+		&word.Difficulty,
+		&pronunciation,
+		&examples,
+		&verbForms,
+		&word.CreatedAt,
+		&word.UpdatedAt,
+		&topicName,
+	)
+	
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get word by ID: %v", err)
 	}
 	
-	return word, nil
+	// Convert NULL values to empty strings
+	word.Description = description.String
+	word.Pronunciation = pronunciation.String
+	word.Examples = examples.String
+	word.VerbForms = verbForms.String
+	
+	return &word, nil
 }
 
 // CreateWithDefaultTopic creates a new word with the default "General" topic
