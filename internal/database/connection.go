@@ -9,44 +9,38 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// Константы для настроек базы данных по умолчанию
-const (
-	DefaultDBType = "sqlite"
-	DefaultDBPath = "./data/engbot.db"
-)
-
 // DB is the global database connection
 var DB *sqlx.DB
 
 // Connect establishes a connection to the database
 func Connect() error {
-	// Используем стандартные значения с возможностью переопределения через переменные окружения
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = DefaultDBPath
-	}
-
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create database directory: %v", err)
+	// Create data directory if it doesn't exist
+	dataDir := "data"
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data directory: %v", err)
 	}
 
 	// Open database connection
-	var err error
-	DB, err = sqlx.Connect("sqlite3", dbPath)
+	dbPath := filepath.Join(dataDir, "engbot.db")
+	db, err := sqlx.Connect("sqlite3", dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %v", err)
 	}
 
 	// Enable foreign keys
-	_, err = DB.Exec("PRAGMA foreign_keys = ON")
+	_, err = db.Exec("PRAGMA foreign_keys = ON")
 	if err != nil {
 		return fmt.Errorf("failed to enable foreign keys: %v", err)
 	}
 
+	// Set connection pool settings
+	db.SetMaxOpenConns(1) // SQLite doesn't support multiple writers
+	db.SetMaxIdleConns(1)
+
+	DB = db
+
 	// Initialize schema
-	return initializeSQLiteSchema()
+	return initializeSchema()
 }
 
 // Close closes the database connection
@@ -57,23 +51,21 @@ func Close() error {
 	return nil
 }
 
-// initializeSQLiteSchema creates necessary tables if they don't exist
-func initializeSQLiteSchema() error {
+// initializeSchema creates necessary tables if they don't exist
+func initializeSchema() error {
 	// Create users table
 	_, err := DB.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			telegram_id INTEGER UNIQUE NOT NULL,
 			username TEXT,
 			first_name TEXT,
 			last_name TEXT,
-			language_code TEXT,
-			is_premium BOOLEAN DEFAULT FALSE,
-			is_admin BOOLEAN DEFAULT FALSE,
-			preferred_topics TEXT, -- JSON array of topic IDs
-			notification_enabled BOOLEAN DEFAULT TRUE,
-			notification_hour INTEGER DEFAULT 8, -- Hour for daily notifications (0-23)
-			words_per_day INTEGER DEFAULT 5, -- Number of words per day
+			preferred_topics TEXT,
+			words_per_day INTEGER DEFAULT 10,
+			notification_hour INTEGER DEFAULT 9,
+			notification_enabled BOOLEAN DEFAULT true,
+			is_admin BOOLEAN DEFAULT false,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
@@ -85,11 +77,9 @@ func initializeSQLiteSchema() error {
 	// Create topics table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS topics (
-			id INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL UNIQUE,
-			description TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
@@ -103,14 +93,13 @@ func initializeSQLiteSchema() error {
 			word TEXT NOT NULL,
 			translation TEXT NOT NULL,
 			description TEXT,
-			topic_id INTEGER NOT NULL,
-			difficulty INTEGER DEFAULT 3,
-			pronunciation TEXT,
 			examples TEXT,
-			verb_forms TEXT,
+			topic_id INTEGER NOT NULL,
+			difficulty INTEGER DEFAULT 1,
+			pronunciation TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL,
+			FOREIGN KEY (topic_id) REFERENCES topics(id),
 			UNIQUE(word, topic_id)
 		)
 	`)
@@ -118,46 +107,62 @@ func initializeSQLiteSchema() error {
 		return fmt.Errorf("failed to create words table: %v", err)
 	}
 
+	// Create learned_words table
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS learned_words (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			word_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			learned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (word_id) REFERENCES words(id),
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			UNIQUE(word_id, user_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create learned_words table: %v", err)
+	}
+
+	// Create user_configs table
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS user_configs (
+			user_id INTEGER PRIMARY KEY,
+			words_per_batch INTEGER DEFAULT 10,
+			repetitions INTEGER DEFAULT 5,
+			is_active BOOLEAN DEFAULT true,
+			last_batch_time TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create user_configs table: %v", err)
+	}
+
 	// Create user_progress table
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS user_progress (
-			id INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL,
 			word_id INTEGER NOT NULL,
-			last_review_date TIMESTAMP,
-			next_review_date TIMESTAMP,
-			interval INTEGER DEFAULT 0,
 			easiness_factor REAL DEFAULT 2.5,
+			interval INTEGER DEFAULT 1,
 			repetitions INTEGER DEFAULT 0,
-			last_quality INTEGER DEFAULT 0,
+			last_quality INTEGER DEFAULT 3,
 			consecutive_right INTEGER DEFAULT 0,
-			is_learned BOOLEAN DEFAULT 0,
+			is_learned BOOLEAN DEFAULT FALSE,
+			last_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			next_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
-			FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			FOREIGN KEY (word_id) REFERENCES words(id),
 			UNIQUE(user_id, word_id)
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create user_progress table: %v", err)
-	}
-
-	// Create test_results table
-	_, err = DB.Exec(`
-		CREATE TABLE IF NOT EXISTS test_results (
-			id INTEGER PRIMARY KEY,
-			user_id INTEGER NOT NULL,
-			topic_id INTEGER,
-			score INTEGER NOT NULL,
-			max_score INTEGER NOT NULL,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(telegram_id) ON DELETE CASCADE,
-			FOREIGN KEY (topic_id) REFERENCES topics(id) ON DELETE SET NULL
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create test_results table: %v", err)
 	}
 
 	return nil

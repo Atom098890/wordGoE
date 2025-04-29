@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -424,4 +425,81 @@ func (r *UserRepository) getUsersWithCondition(condition string, args ...interfa
 	}
 	
 	return users, nil
+}
+
+// UserStats represents user's learning statistics
+type UserStats struct {
+	TotalWords      int
+	LearnedToday    int
+	LearningStreak  int
+	TotalLearned    int
+}
+
+// GetUserStats retrieves user's learning statistics
+func (r *UserRepository) GetUserStats(ctx context.Context, userID int64) (*UserStats, error) {
+	stats := &UserStats{}
+
+	// Get total learned words
+	err := DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) 
+		FROM learned_words lw
+		JOIN users u ON u.id = lw.user_id
+		WHERE u.telegram_id = ?
+	`, userID).Scan(&stats.TotalLearned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total learned words: %v", err)
+	}
+
+	// Get words learned today
+	err = DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) 
+		FROM learned_words lw
+		JOIN users u ON u.id = lw.user_id
+		WHERE u.telegram_id = ? 
+		AND date(lw.learned_at) = date('now')
+	`, userID).Scan(&stats.LearnedToday)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get today's learned words: %v", err)
+	}
+
+	// Get learning streak (consecutive days with learned words)
+	err = DB.QueryRowContext(ctx, `
+		WITH RECURSIVE dates(date) AS (
+			SELECT date('now', '-30 days')
+			UNION ALL
+			SELECT date(date, '+1 day')
+			FROM dates
+			WHERE date < date('now')
+		),
+		daily_progress AS (
+			SELECT date(lw.learned_at) as learn_date, COUNT(*) as words_count
+			FROM learned_words lw
+			JOIN users u ON u.id = lw.user_id
+			WHERE u.telegram_id = ?
+			GROUP BY date(lw.learned_at)
+		)
+		SELECT COUNT(*) as streak
+		FROM (
+			SELECT dates.date
+			FROM dates
+			LEFT JOIN daily_progress ON dates.date = daily_progress.learn_date
+			WHERE daily_progress.words_count > 0
+			ORDER BY dates.date DESC
+		) as consecutive_days
+		WHERE consecutive_days.date = date('now', '-' || (rowid - 1) || ' days')
+	`, userID).Scan(&stats.LearningStreak)
+	if err != nil {
+		// If error, just set streak to 0 instead of failing
+		stats.LearningStreak = 0
+	}
+
+	// Get total available words
+	err = DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM words
+	`).Scan(&stats.TotalWords)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get total words: %v", err)
+	}
+
+	return stats, nil
 } 

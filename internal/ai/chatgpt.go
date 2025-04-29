@@ -5,42 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/example/engbot/pkg/models"
 )
 
-// ChatGPT represents a client for the OpenAI ChatGPT API
-type ChatGPT struct {
-	apiKey     string
-	apiURL     string
-	maxTokens  int
-	temperature float64
-}
-
-// New creates a new ChatGPT client
-func New() (*ChatGPT, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
-	}
-
-	return &ChatGPT{
-		apiKey:     apiKey,
-		apiURL:     "https://api.openai.com/v1/chat/completions",
-		maxTokens:  100,
-		temperature: 0.7,
-	}, nil
-}
-
-// Message represents a message in the ChatGPT conversation
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// ChatRequest represents a request to the ChatGPT API
 type ChatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
@@ -48,165 +22,47 @@ type ChatRequest struct {
 	Temperature float64   `json:"temperature"`
 }
 
-// ChatResponse represents a response from the ChatGPT API
 type ChatResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
+			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+		Index        int    `json:"index"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
-	} `json:"error,omitempty"`
+		Type    string `json:"type"`
+		Param   string `json:"param"`
+		Code    string `json:"code"`
+	} `json:"error"`
 }
 
-// GenerateExample generates an example sentence for the given word
-func (c *ChatGPT) GenerateExample(word *models.Word) (string, error) {
-	prompt := fmt.Sprintf(
-		"Generate a short, practical example sentence in English that naturally includes the word '%s' (which translates to '%s' in Russian).",
-		word.Word, word.Translation,
-	)
-
-	messages := []Message{
-		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - создавать качественные примеры использования английских слов."},
-		{Role: "user", Content: prompt},
-	}
-
-	request := ChatRequest{
-		Model:       "gpt-3.5-turbo",
-		Messages:    messages,
-		MaxTokens:   c.maxTokens,
-		Temperature: c.temperature,
-	}
-
-	requestData, err := json.Marshal(request)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var response ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %v", err)
-	}
-
-	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
-	}
-
-	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
-	}
-
-	// Clean up the response
-	example := response.Choices[0].Message.Content
-	example = strings.TrimSpace(example)
-
-	return example, nil
+type ChatGPT struct {
+	apiKey      string
+	apiURL      string
+	maxTokens   int
+	temperature float64
 }
 
-// GenerateExampleWithFallback generates an example with fallback to the stored context
-func (c *ChatGPT) GenerateExampleWithFallback(word *models.Word) string {
-	example, err := c.GenerateExample(word)
-	if err != nil {
-		// Log the error and fall back to the stored context
-		fmt.Printf("Error generating example for '%s': %v\n", word.Word, err)
-		
-		// If there's a stored context, use it
-		if word.Description != "" {
-			return word.Description
-		}
-		
-		// If no stored context, create a basic example
-		return fmt.Sprintf("This is an example of the word '%s'.", word.Word)
+func NewChatGPT(apiKey string) *ChatGPT {
+	return &ChatGPT{
+		apiKey:      apiKey,
+		apiURL:      "https://api.openai.com/v1/chat/completions",
+		maxTokens:   150,
+		temperature: 0.7,
 	}
-	
-	return example
-}
-
-// TranslateText translates the given text from English to Russian
-func (c *ChatGPT) TranslateText(text string) string {
-	prompt := fmt.Sprintf(
-		"Переведи следующий текст с английского на русский:\n\n%s\n\nВерни только перевод, без дополнительных пояснений.",
-		text,
-	)
-
-	messages := []Message{
-		{Role: "system", Content: "Ты - переводчик с английского на русский язык. Твоя задача - делать качественные переводы, сохраняя смысл и стиль оригинала."},
-		{Role: "user", Content: prompt},
-	}
-
-	request := ChatRequest{
-		Model:       "gpt-3.5-turbo",
-		Messages:    messages,
-		MaxTokens:   c.maxTokens * 2, // More tokens for translation
-		Temperature: 0.3,             // Lower temperature for more accurate translations
-	}
-
-	requestData, err := json.Marshal(request)
-	if err != nil {
-		fmt.Printf("Error marshaling translation request: %v\n", err)
-		return ""
-	}
-
-	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
-	if err != nil {
-		fmt.Printf("Error creating translation request: %v\n", err)
-		return ""
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error sending translation request: %v\n", err)
-		return ""
-	}
-	defer resp.Body.Close()
-
-	var response ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		fmt.Printf("Error decoding translation response: %v\n", err)
-		return ""
-	}
-
-	if response.Error != nil {
-		fmt.Printf("API error in translation: %s\n", response.Error.Message)
-		return ""
-	}
-
-	if len(response.Choices) == 0 {
-		fmt.Printf("No translation choices returned\n")
-		return ""
-	}
-
-	// Clean up the response
-	translation := response.Choices[0].Message.Content
-	translation = strings.TrimSpace(translation)
-
-	return translation
 }
 
 // GenerateTextWithWords generates a short English text using the provided words
 func (c *ChatGPT) GenerateTextWithWords(words []models.Word, count int) (string, string) {
 	// Limit the number of words to use
-	maxWords := 5
+	maxWords := 10
 	if count < maxWords {
 		maxWords = count
 	}
@@ -221,23 +77,24 @@ func (c *ChatGPT) GenerateTextWithWords(words []models.Word, count int) (string,
 	}
 	
 	prompt := fmt.Sprintf(
-		"Создай короткий, занимательный текст на английском языке (2-3 предложения), "+
+		"Создай короткий, занимательный текст на английском языке (3-4 предложения), "+
 			"который включает следующие слова: %s. "+
 			"Текст должен быть простым и понятным для начинающего изучать английский. "+
+			"Используй ВСЕ предоставленные слова. "+
 			"Верни только сам текст без дополнительных пояснений.",
 		wordList,
 	)
 
 	messages := []Message{
-		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - создавать короткие тексты, помогающие запомнить новые слова в контексте."},
+		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - создавать простые и понятные тексты для начинающих."},
 		{Role: "user", Content: prompt},
 	}
 
 	request := ChatRequest{
 		Model:       "gpt-3.5-turbo",
 		Messages:    messages,
-		MaxTokens:   150,
-		Temperature: 0.8, // Higher temperature for more creativity
+		MaxTokens:   c.maxTokens,
+		Temperature: c.temperature,
 	}
 
 	requestData, err := json.Marshal(request)
@@ -279,52 +136,40 @@ func (c *ChatGPT) GenerateTextWithWords(words []models.Word, count int) (string,
 		return "", ""
 	}
 
-	// Get the generated English text
-	englishText := strings.TrimSpace(response.Choices[0].Message.Content)
-	
-	// Translate the text to Russian
-	russianText := c.TranslateText(englishText)
-	
-	return englishText, russianText
+	// Get the generated text
+	text := response.Choices[0].Message.Content
+	text = strings.TrimSpace(text)
+
+	// Get the translation
+	translation := c.TranslateText(text)
+
+	return text, translation
 }
 
-// GenerateVerbConjugation generates examples of verb conjugation in three tenses: present, past, and future
-func (c *ChatGPT) GenerateVerbConjugation(word string) (string, error) {
-	// Only generate conjugations for verbs
-	prompt := fmt.Sprintf(
-		"If the word '%s' is a verb in English, provide its basic conjugation in three tenses WITHOUT PRONOUNS, just the verb forms. "+
-		"Format the output like this (use this exact format):\n\n"+
-		"Present: [verb in present tense]\n"+
-		"Past: [verb in past tense]\n"+
-		"Future: [verb in future tense without 'will']\n\n"+
-		"Example for the verb 'run':\n"+
-		"Present: run/runs\n"+
-		"Past: ran\n"+
-		"Future: will run\n\n"+
-		"If the word is not a verb, respond with 'Not a verb'.",
-		word,
-	)
-
+// TranslateText translates English text to Russian using ChatGPT
+func (c *ChatGPT) TranslateText(text string) string {
 	messages := []Message{
-		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - предоставлять информацию о склонении глаголов в разных временах в краткой форме."},
-		{Role: "user", Content: prompt},
+		{Role: "system", Content: "You are a translator. Translate the following English text to Russian."},
+		{Role: "user", Content: text},
 	}
 
 	request := ChatRequest{
 		Model:       "gpt-3.5-turbo",
 		Messages:    messages,
-		MaxTokens:   150,
-		Temperature: 0.3, // Lower temperature for more accurate information
+		MaxTokens:   c.maxTokens,
+		Temperature: 0.3,
 	}
 
 	requestData, err := json.Marshal(request)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %v", err)
+		fmt.Printf("Error marshaling translation request: %v\n", err)
+		return ""
 	}
 
 	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		fmt.Printf("Error creating translation request: %v\n", err)
+		return ""
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -333,61 +178,60 @@ func (c *ChatGPT) GenerateVerbConjugation(word string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %v", err)
+		fmt.Printf("Error sending translation request: %v\n", err)
+		return ""
 	}
 	defer resp.Body.Close()
 
 	var response ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %v", err)
+		fmt.Printf("Error decoding translation response: %v\n", err)
+		return ""
 	}
 
 	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
+		fmt.Printf("API error in translation: %s\n", response.Error.Message)
+		return ""
 	}
 
 	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
+		fmt.Printf("No translation choices returned\n")
+		return ""
 	}
 
-	conjugation := response.Choices[0].Message.Content
-	conjugation = strings.TrimSpace(conjugation)
-
-	// Check if the word is not a verb
-	if strings.Contains(conjugation, "Not a verb") {
-		return "", nil
-	}
-
-	return conjugation, nil
+	translation := response.Choices[0].Message.Content
+	return strings.TrimSpace(translation)
 }
 
-// GenerateExamples generates multiple example sentences for the given word
+// GenerateExamples generates example sentences for a given word
 func (c *ChatGPT) GenerateExamples(word string, count int) (string, error) {
 	prompt := fmt.Sprintf(
-		"Generate %d practical example sentences in English that naturally include the word '%s'. Each example should be on a new line. Do not number the examples. Make them diverse and useful for language learning.",
+		"Create %d simple example sentence(s) using the word '%s'. "+
+		"The sentence should be clear and easy to understand for English learners. "+
+		"Return only the example sentence(s), without any additional text.",
 		count, word,
 	)
 
 	messages := []Message{
-		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - создавать качественные примеры использования английских слов."},
+		{Role: "system", Content: "You are an English teacher. Create simple, clear example sentences."},
 		{Role: "user", Content: prompt},
 	}
 
 	request := ChatRequest{
 		Model:       "gpt-3.5-turbo",
 		Messages:    messages,
-		MaxTokens:   c.maxTokens * 2,  // More tokens for multiple examples
-		Temperature: c.temperature,
+		MaxTokens:   c.maxTokens,
+		Temperature: 0.7,
 	}
 
 	requestData, err := json.Marshal(request)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %v", err)
+		return "", fmt.Errorf("error marshaling example request: %v", err)
 	}
 
 	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		return "", fmt.Errorf("error creating example request: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -396,66 +240,55 @@ func (c *ChatGPT) GenerateExamples(word string, count int) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %v", err)
+		return "", fmt.Errorf("error sending example request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	var response ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %v", err)
+		return "", fmt.Errorf("error decoding example response: %v", err)
 	}
 
 	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
+		return "", fmt.Errorf("API error in example generation: %s", response.Error.Message)
 	}
 
 	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
+		return "", fmt.Errorf("no examples generated")
 	}
 
-	// Clean up the response
-	examples := response.Choices[0].Message.Content
-	examples = strings.TrimSpace(examples)
-
-	return examples, nil
+	return strings.TrimSpace(response.Choices[0].Message.Content), nil
 }
 
-// GenerateIrregularVerbForms генерирует три формы неправильного глагола
+// GenerateIrregularVerbForms gets the forms of an irregular verb
 func (c *ChatGPT) GenerateIrregularVerbForms(word string) (string, error) {
 	prompt := fmt.Sprintf(
-		"Если '%s' является неправильным глаголом в английском языке, предоставьте его три основные формы в следующем формате:\n\n"+
-		"Infinitive: [базовая форма]\n"+
-		"Past Simple: [форма прошедшего времени]\n"+
-		"Past Participle: [форма причастия прошедшего времени]\n\n"+
-		"Если это не неправильный глагол, но это глагол, укажите 'Regular verb' и покажите формы с добавлением -ed.\n"+
-		"Если это вообще не глагол, ответьте 'Not a verb'.\n\n"+
-		"Пример для глагола 'go':\n"+
-		"Infinitive: go\n"+
-		"Past Simple: went\n"+
-		"Past Participle: gone",
+		"If '%s' is an irregular verb, provide its forms in this format:\n"+
+		"Infinitive: [form]\nPast Simple: [form]\nPast Participle: [form]\n\n"+
+		"If it's not an irregular verb, just respond with 'Not a verb'.",
 		word,
 	)
 
 	messages := []Message{
-		{Role: "system", Content: "Ты - помощник для изучения английского языка. Твоя задача - предоставлять информацию о формах неправильных глаголов в краткой и понятной форме."},
+		{Role: "system", Content: "You are an English teacher. Provide verb forms accurately and concisely."},
 		{Role: "user", Content: prompt},
 	}
 
 	request := ChatRequest{
 		Model:       "gpt-3.5-turbo",
 		Messages:    messages,
-		MaxTokens:   100,
-		Temperature: 0.3, // Низкая температура для более точных ответов
+		MaxTokens:   c.maxTokens,
+		Temperature: 0.3,
 	}
 
 	requestData, err := json.Marshal(request)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %v", err)
+		return "", fmt.Errorf("error marshaling verb forms request: %v", err)
 	}
 
 	req, err := http.NewRequest("POST", c.apiURL, bytes.NewBuffer(requestData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %v", err)
+		return "", fmt.Errorf("error creating verb forms request: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -464,40 +297,22 @@ func (c *ChatGPT) GenerateIrregularVerbForms(word string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %v", err)
+		return "", fmt.Errorf("error sending verb forms request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	var response ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("failed to decode response: %v", err)
+		return "", fmt.Errorf("error decoding verb forms response: %v", err)
 	}
 
 	if response.Error != nil {
-		return "", fmt.Errorf("API error: %s", response.Error.Message)
+		return "", fmt.Errorf("API error in verb forms generation: %s", response.Error.Message)
 	}
 
 	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
+		return "", fmt.Errorf("no verb forms generated")
 	}
 
-	verbForms := response.Choices[0].Message.Content
-	verbForms = strings.TrimSpace(verbForms)
-
-	return verbForms, nil
+	return strings.TrimSpace(response.Choices[0].Message.Content), nil
 }
-
-// CheckIrregularVerb проверяет, является ли слово неправильным глаголом и возвращает его формы
-func (c *ChatGPT) CheckIrregularVerb(word string) (bool, string, error) {
-	verbForms, err := c.GenerateIrregularVerbForms(word)
-	if err != nil {
-		return false, "", err
-	}
-	
-	// Если это не глагол или регулярный глагол, вернем false
-	if verbForms == "" || strings.Contains(verbForms, "Not a verb") || strings.Contains(verbForms, "Regular verb") {
-		return false, "", nil
-	}
-	
-	return true, verbForms, nil
-} 

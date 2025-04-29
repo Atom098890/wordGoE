@@ -148,13 +148,21 @@ func (r *UserProgressRepository) CreateOrUpdate(progress *models.UserProgress) e
 func (r *UserProgressRepository) GetUserStatistics(userID int64) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 	
-	// Get total words in progress
-	var totalCount int
-	err := DB.Get(&totalCount, "SELECT COUNT(*) FROM user_progress WHERE user_id = $1", userID)
+	// Get total words in the system
+	var totalWords int
+	err := DB.Get(&totalWords, "SELECT COUNT(*) FROM words")
 	if err != nil {
 		return nil, err
 	}
-	stats["total_words"] = totalCount
+	stats["total_words"] = totalWords
+	
+	// Get words in progress (started learning)
+	var wordsInProgress int
+	err = DB.Get(&wordsInProgress, "SELECT COUNT(*) FROM user_progress WHERE user_id = $1", userID)
+	if err != nil {
+		return nil, err
+	}
+	stats["words_in_progress"] = wordsInProgress
 	
 	// Get words due today
 	var dueToday int
