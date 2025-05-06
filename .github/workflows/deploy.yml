@@ -49,9 +49,9 @@ jobs:
           NOTIFICATION_START_HOUR=8
           NOTIFICATION_END_HOUR=22
           
-          # ChatGPT Configuration (optional)
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          EOL" > /dev/null 2>&1
+          # # ChatGPT Configuration (optional)
+          # OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          # EOL" > /dev/null 2>&1
           
           # Deploy
           echo "Starting deployment..."

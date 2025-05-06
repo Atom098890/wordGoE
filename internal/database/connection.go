@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -61,11 +62,8 @@ func initializeSchema() error {
 			username TEXT,
 			first_name TEXT,
 			last_name TEXT,
-			preferred_topics TEXT,
-			words_per_day INTEGER DEFAULT 10,
-			notification_hour INTEGER DEFAULT 9,
 			notification_enabled BOOLEAN DEFAULT true,
-			is_admin BOOLEAN DEFAULT false,
+			notification_hour INTEGER DEFAULT 9,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
@@ -78,92 +76,58 @@ func initializeSchema() error {
 	_, err = DB.Exec(`
 		CREATE TABLE IF NOT EXISTS topics (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create topics table: %v", err)
-	}
-
-	// Create words table
-	_, err = DB.Exec(`
-		CREATE TABLE IF NOT EXISTS words (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			word TEXT NOT NULL,
-			translation TEXT NOT NULL,
-			description TEXT,
-			examples TEXT,
-			topic_id INTEGER NOT NULL,
-			difficulty INTEGER DEFAULT 1,
-			pronunciation TEXT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (topic_id) REFERENCES topics(id),
-			UNIQUE(word, topic_id)
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create words table: %v", err)
-	}
-
-	// Create learned_words table
-	_, err = DB.Exec(`
-		CREATE TABLE IF NOT EXISTS learned_words (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			word_id INTEGER NOT NULL,
 			user_id INTEGER NOT NULL,
-			learned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (word_id) REFERENCES words(id),
-			FOREIGN KEY (user_id) REFERENCES users(id),
-			UNIQUE(word_id, user_id)
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create learned_words table: %v", err)
-	}
-
-	// Create user_configs table
-	_, err = DB.Exec(`
-		CREATE TABLE IF NOT EXISTS user_configs (
-			user_id INTEGER PRIMARY KEY,
-			words_per_batch INTEGER DEFAULT 10,
-			repetitions INTEGER DEFAULT 5,
-			is_active BOOLEAN DEFAULT true,
-			last_batch_time TIMESTAMP,
+			name TEXT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id)
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create user_configs table: %v", err)
+		return fmt.Errorf("failed to create topics table: %v", err)
 	}
 
-	// Create user_progress table
+	// Create repetitions table
 	_, err = DB.Exec(`
-		CREATE TABLE IF NOT EXISTS user_progress (
+		CREATE TABLE IF NOT EXISTS repetitions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL,
-			word_id INTEGER NOT NULL,
-			easiness_factor REAL DEFAULT 2.5,
-			interval INTEGER DEFAULT 1,
-			repetitions INTEGER DEFAULT 0,
-			last_quality INTEGER DEFAULT 3,
-			consecutive_right INTEGER DEFAULT 0,
-			is_learned BOOLEAN DEFAULT FALSE,
-			last_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			next_review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			topic_id INTEGER NOT NULL,
+			repetition_number INTEGER NOT NULL,
+			completed BOOLEAN DEFAULT false,
+			next_review_date TIMESTAMP NOT NULL,
+			last_review_date TIMESTAMP,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id),
-			FOREIGN KEY (word_id) REFERENCES words(id),
-			UNIQUE(user_id, word_id)
+			FOREIGN KEY (topic_id) REFERENCES topics(id)
 		)
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create user_progress table: %v", err)
+		return fmt.Errorf("failed to create repetitions table: %v", err)
 	}
 
+	// Create statistics table
+	_, err = DB.Exec(`
+		CREATE TABLE IF NOT EXISTS statistics (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			topic_id INTEGER NOT NULL,
+			total_repetitions INTEGER DEFAULT 0,
+			completed_repetitions INTEGER DEFAULT 0,
+			FOREIGN KEY (user_id) REFERENCES users(id),
+			FOREIGN KEY (topic_id) REFERENCES topics(id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create statistics table: %v", err)
+	}
+
+	log.Println("Database schema initialized successfully")
 	return nil
+}
+
+// GetDB returns the database connection
+func GetDB() *sqlx.DB {
+	return DB
 }

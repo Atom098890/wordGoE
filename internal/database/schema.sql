@@ -1,8 +1,13 @@
 -- Create topics table
 CREATE TABLE IF NOT EXISTS topics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(user_id, name)
 );
 
 -- Create words table
@@ -72,11 +77,37 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     first_name TEXT,
     last_name TEXT,
-    preferred_topics TEXT,  -- JSON array of topic IDs
-    words_per_day INTEGER DEFAULT 10,
-    notification_hour INTEGER DEFAULT 9,
     notification_enabled BOOLEAN DEFAULT true,
-    is_admin BOOLEAN DEFAULT false,
+    notification_hour INTEGER DEFAULT 9,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create repetitions table
+CREATE TABLE IF NOT EXISTS repetitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    repetition_number INTEGER NOT NULL DEFAULT 1,
+    next_review_date TIMESTAMP NOT NULL,
+    last_review_date TIMESTAMP,
+    completed BOOLEAN DEFAULT false,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (topic_id) REFERENCES topics(id)
+);
+
+-- Create statistics table
+CREATE TABLE IF NOT EXISTS statistics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    topic_id INTEGER NOT NULL,
+    total_repetitions INTEGER DEFAULT 0,
+    completed_repetitions INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (topic_id) REFERENCES topics(id),
+    UNIQUE(user_id, topic_id)
 ); 
