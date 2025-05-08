@@ -195,18 +195,44 @@ func (r *TopicRepository) Update(ctx context.Context, topic *models.Topic) error
 
 // Delete removes a topic
 func (r *TopicRepository) Delete(ctx context.Context, userID, topicID int64) error {
-	query := "DELETE FROM topics WHERE id = ? AND user_id = ?"
-	result, err := DB.ExecContext(ctx, query, topicID, userID)
+	tx, err := DB.BeginTxx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	// Delete related repetitions
+	_, err = tx.ExecContext(ctx, "DELETE FROM repetitions WHERE user_id = ? AND topic_id = ?", userID, topicID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete repetitions: %w", err)
+	}
+
+	// Delete related statistics
+	_, err = tx.ExecContext(ctx, "DELETE FROM statistics WHERE user_id = ? AND topic_id = ?", userID, topicID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to delete statistics: %w", err)
+	}
+
+	// Delete the topic
+	result, err := tx.ExecContext(ctx, "DELETE FROM topics WHERE id = ? AND user_id = ?", topicID, userID)
+	if err != nil {
+		tx.Rollback()
 		return fmt.Errorf("failed to delete topic: %w", err)
 	}
 
 	rows, err := result.RowsAffected()
 	if err != nil {
+		tx.Rollback()
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
+		tx.Rollback()
 		return fmt.Errorf("topic not found or user doesn't have permission")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil

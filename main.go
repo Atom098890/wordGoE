@@ -44,8 +44,14 @@ func main() {
 
 	// Запускаем проверку повторений в отдельной горутине
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
+
+		// Выполняем первоначальную проверку
+		err := b.CheckDueRepetitions(ctx)
+		if err != nil {
+			log.Printf("Error checking due repetitions: %v", err)
+		}
 
 		for {
 			select {

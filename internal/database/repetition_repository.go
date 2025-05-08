@@ -99,15 +99,17 @@ func (r *RepetitionRepository) GetDueRepetitions(ctx context.Context, userID int
 }
 
 // GetByTopicID returns all repetitions for a specific topic
-func (r *RepetitionRepository) GetByTopicID(ctx context.Context, userID, topicID int64) ([]models.Repetition, error) {
+func (r *RepetitionRepository) GetByTopicID(ctx context.Context, userID, repID int64) ([]models.Repetition, error) {
     query := `
-        SELECT *
-        FROM repetitions
-        WHERE user_id = ? AND topic_id = ?
-        ORDER BY created_at DESC
+        SELECT r.*, t.name as topic_name
+        FROM repetitions r
+        JOIN topics t ON r.topic_id = t.id
+        WHERE r.user_id = ? AND r.id = ?
+        AND r.completed = false
+        ORDER BY r.created_at DESC
     `
     var repetitions []models.Repetition
-    err := DB.SelectContext(ctx, &repetitions, query, userID, topicID)
+    err := DB.SelectContext(ctx, &repetitions, query, userID, repID)
     if err != nil {
         return nil, fmt.Errorf("failed to get repetitions: %v", err)
     }
