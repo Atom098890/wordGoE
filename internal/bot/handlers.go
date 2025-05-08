@@ -734,8 +734,27 @@ func (b *Bot) handleTimeSettings(callback *tgbotapi.CallbackQuery) error {
 }
 
 func (b *Bot) handleDeleteTopicMenu(callback *tgbotapi.CallbackQuery) error {
-	topics, err := b.topicRepo.GetAllByUserID(context.Background(), callback.From.ID)
+	// First get the user by Telegram ID
+	user, err := b.userRepo.GetByTelegramID(context.Background(), callback.From.ID)
+	if err != nil || user == nil {
+		log.Printf("Error getting user or user not found: %v", err)
+		text := "❌ Ошибка: не удалось получить профиль пользователя"
+		buttons := [][]MenuButton{
+			{{Text: "⬅️ Назад к темам", CallbackData: "topics_menu"}},
+		}
+		msg := tgbotapi.NewEditMessageTextAndMarkup(
+			callback.Message.Chat.ID,
+			callback.Message.MessageID,
+			text,
+			createKeyboard(buttons),
+		)
+		return b.editMessage(msg)
+	}
+	
+	// Now use the correct user.ID to get topics
+	topics, err := b.topicRepo.GetAllByUserID(context.Background(), user.ID)
 	if err != nil {
+		log.Printf("Error getting topics: %v", err)
 		return err
 	}
 
