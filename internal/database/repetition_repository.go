@@ -98,22 +98,21 @@ func (r *RepetitionRepository) GetDueRepetitions(ctx context.Context, userID int
     return repetitions, nil
 }
 
-// GetByTopicID returns all repetitions for a specific topic
-func (r *RepetitionRepository) GetByTopicID(ctx context.Context, userID, repID int64) ([]models.Repetition, error) {
+// GetByID returns a repetition by its ID and userID
+func (r *RepetitionRepository) GetByID(ctx context.Context, userID, repID int64) (*models.Repetition, error) {
     query := `
         SELECT r.*, t.name as topic_name
         FROM repetitions r
         JOIN topics t ON r.topic_id = t.id
         WHERE r.user_id = ? AND r.id = ?
-        AND r.completed = false
-        ORDER BY r.created_at DESC
+        LIMIT 1
     `
-    var repetitions []models.Repetition
-    err := DB.SelectContext(ctx, &repetitions, query, userID, repID)
+    var rep models.Repetition
+    err := DB.GetContext(ctx, &rep, query, userID, repID)
     if err != nil {
-        return nil, fmt.Errorf("failed to get repetitions: %v", err)
+        return nil, fmt.Errorf("failed to get repetition: %v", err)
     }
-    return repetitions, nil
+    return &rep, nil
 }
 
 // CalculateNextReviewDate calculates the next review date based on the repetition number

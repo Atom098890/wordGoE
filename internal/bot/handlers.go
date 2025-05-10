@@ -799,20 +799,18 @@ func (b *Bot) handleDeleteTopicMenu(callback *tgbotapi.CallbackQuery) error {
 // handleTopicComplete handles the completion of a topic
 func (b *Bot) handleTopicComplete(ctx context.Context, userID int64, chatID int64, repID int64) error {
 	// Get the repetition
-	repetitions, err := b.repetitionRepo.GetByTopicID(ctx, userID, repID)
-	if err != nil || len(repetitions) == 0 {
+	rep, err := b.repetitionRepo.GetByID(ctx, userID, repID)
+	if err != nil || rep == nil {
 		log.Printf("Error getting repetition: %v", err)
 		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка обновления прогресса. Попробуйте позже.")
 		return b.sendMessage(msg)
 	}
 
-	rep := repetitions[0]
-
 	// Mark current repetition as completed
 	rep.Completed = true
 	now := time.Now()
 	rep.LastReviewDate = &now
-	err = b.repetitionRepo.Update(ctx, &rep)
+	err = b.repetitionRepo.Update(ctx, rep)
 	if err != nil {
 		log.Printf("Error updating repetition: %v", err)
 		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка обновления прогресса. Попробуйте позже.")
